@@ -1,0 +1,140 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>新对话</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <aside class="sidebar" id="sidebar" aria-label="侧边栏">
+        <header class="sidebar-head">
+          <div class="brand">
+            <div class="avatar">li</div>
+            <span>li</span>
+          </div>
+        </header>
+
+        <button class="new-chat-btn" id="newChatBtn" type="button">新对话</button>
+
+        <nav class="menu" aria-label="主菜单">
+          <button class="menu-item" id="menuFiles" type="button">文件管理</button>
+          <button class="menu-item" id="menuStatus" type="button">系统状态</button>
+        </nav>
+
+        <section class="history" aria-label="历史对话">
+          <h2>历史对话</h2>
+          <div class="history-list" id="historyList"></div>
+        </section>
+      </aside>
+
+      <main class="main" aria-label="主内容区">
+        <header class="topbar">
+          <button class="icon-btn" id="sidebarToggle" type="button" aria-label="展开侧边栏">☰</button>
+          <div class="topbar-title">
+            <h1>新对话</h1>
+            <p>智能检索助手</p>
+          </div>
+        </header>
+
+        <div class="content-layout">
+          <section class="conversation-area">
+            <section class="welcome" id="welcomePanel">
+              <h2>有什么我能帮你的吗？</h2>
+              <div class="suggestions">
+                <button type="button">帮我总结这个问题的重点</button>
+                <button type="button">给我一个可执行计划</button>
+                <button type="button">整理这段内容成条目</button>
+                <button type="button">解释这个概念并举例</button>
+                <button type="button">对比两种方案优缺点</button>
+                <button type="button">给出一个简洁版本答案</button>
+              </div>
+            </section>
+
+            <section class="chat" id="chat" aria-label="对话区"></section>
+
+            <section class="panel-view hidden" id="panelFiles" aria-label="文件管理面板">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>文件管理</h3>
+                  <button class="panel-close" data-close="panelFiles" type="button" aria-label="关闭">×</button>
+                </div>
+                <p class="panel-text">上传并管理你的文件数据</p>
+
+                <label class="upload-box" id="uploadArea" for="docFileInput">
+                  <strong>点击或拖拽上传</strong>
+                  <span>支持 .txt .md .pdf .docx 文件</span>
+                </label>
+                <input id="docFileInput" type="file" multiple accept=".txt,.md,.pdf,.docx,.doc" />
+                <div class="file-feedback hidden" id="fileFeedback" aria-live="polite"></div>
+
+                <div class="doc-list" id="docList"></div>
+              </div>
+            </section>
+
+            <section class="panel-view hidden" id="panelStatus" aria-label="系统状态面板">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>系统状态</h3>
+                  <button class="panel-close" data-close="panelStatus" type="button" aria-label="关闭">×</button>
+                </div>
+
+                <div class="status-grid" id="statusGrid">
+                  <div class="status-item" id="statusPG">
+                    <span class="status-label">PostgreSQL</span>
+                    <span class="status-dot pending"></span>
+                    <span class="status-text">检查中</span>
+                  </div>
+                  <div class="status-item" id="statusQdrant">
+                    <span class="status-label">Qdrant</span>
+                    <span class="status-dot pending"></span>
+                    <span class="status-text">检查中</span>
+                  </div>
+                  <div class="status-item" id="statusEmbedding">
+                    <span class="status-label">Embedding</span>
+                    <span class="status-dot pending"></span>
+                    <span class="status-text">检查中</span>
+                  </div>
+                  <div class="status-item" id="statusReranker">
+                    <span class="status-label">Reranker</span>
+                    <span class="status-dot pending"></span>
+                    <span class="status-text">检查中</span>
+                  </div>
+                </div>
+
+                <div class="status-actions">
+                  <button class="secondary-btn" id="refreshStatusBtn" type="button">刷新</button>
+                  <button class="primary-btn" id="bootstrapBtn" type="button">初始化</button>
+                </div>
+              </div>
+            </section>
+
+            <footer class="composer-wrap" id="composerWrap">
+              <div class="tool-row">
+                <button type="button" class="tool-btn">@</button>
+                <button type="button" class="tool-btn">快速</button>
+                <button type="button" class="tool-btn">帮我写作</button>
+                <button type="button" class="tool-btn">图像生成</button>
+                <button type="button" class="tool-btn">更多</button>
+              </div>
+
+              <form class="composer" id="composer">
+                <input id="input" type="text" placeholder="发消息..." autocomplete="off" />
+                <button type="submit" aria-label="发送">发送</button>
+              </form>
+            </footer>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
