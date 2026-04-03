@@ -1,0 +1,36 @@
+{
+  "validated_at_epoch": 1774772045.553734,
+  "elapsed_sec": 26.151006200001575,
+  "bootstrap_status": {
+    "postgresql_ready": true,
+    "qdrant_ready": true,
+    "embedding_model_ready": true,
+    "reranker_model_ready": true,
+    "all_ready": true
+  },
+  "containers_before": {
+    "legal-search-postgres": {
+      "exists": true,
+      "running": true
+    },
+    "legal-search-qdrant": {
+      "exists": true,
+      "running": true
+    }
+  },
+  "containers_removed_for_clean_start": {
+    "legal-search-postgres": true,
+    "legal-search-qdrant": true
+  },
+  "containers_after": {
+    "legal-search-postgres": {
+      "exists": true,
+      "running": true
+    },
+    "legal-search-qdrant": {
+      "exists": true,
+      "running": true
+    }
+  },
+  "all_ready": true
+}
