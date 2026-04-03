@@ -1,0 +1,2 @@
+#!/bin/sh
+python scripts/hook_checks.py pre-push

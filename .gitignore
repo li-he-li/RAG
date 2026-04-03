@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.mypy_cache/
+
+.codex/
+.githooks/.state/
+backend/data/models_cache/
+backend/.env
+backend/backend_run.out.log
+backend/backend_run.err.log
+frontend_http.out.log
+frontend_http.err.log
+nul
