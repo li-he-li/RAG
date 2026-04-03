@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>法律文书检索系统 - 架构图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', 'Noto Sans SC', sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 20px;
+}
+h1 {
+  text-align: center;
+  font-size: 24px;
+  margin-bottom: 8px;
+  color: #38bdf8;
+}
+.subtitle {
+  text-align: center;
+  color: #94a3b8;
+  margin-bottom: 24px;
+  font-size: 14px;
+}
+.diagram-container {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+  border: 1px solid #334155;
+}
+.diagram-container h2 {
+  color: #38bdf8;
+  font-size: 16px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #334155;
+}
+.mermaid {
+  display: flex;
+  justify-content: center;
+}
+.legend {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding: 12px;
+  background: #0f172a;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+</style>
+</head>
+<body>
+
+<h1>法律文书相似检索与证据溯源系统</h1>
+<p class="subtitle">Legal Similarity Evidence Search — 系统架构全景图</p>
+
+<!-- 1. 系统总览 -->
+<div class="diagram-container">
+<h2>一、系统总览</h2>
+<pre class="mermaid">
+graph TB
+    subgraph USER["👤 用户层"]
+        Browser["🌐 浏览器<br/>localhost:3000"]
+    end
+
+    subgraph FRONTEND["🖥️ 前端 (静态 HTML/JS/CSS)"]
+        UI["界面组件"]
+        Chat["对话区"]
+        FileManager["文件管理"]
+        StatusPanel["系统状态"]
+    end
+
+    subgraph BACKEND["⚙️ 后端 (FastAPI + Python)"]
+        API["FastAPI 路由层<br/>/api/search, /api/chat,<br/>/api/documents, /api/health"]
+        Indexer["索引服务<br/>parser → embed → store"]
+        Retrieval["检索服务<br/>query → recall → rerank → explain"]
+        ChatSvc["对话服务<br/>retrieve → context → generate"]
+        Embedding["Embedding 服务<br/>Google Gemini / 本地 BGE-M3"]
+        Reranker["Reranker 服务<br/>BGE-Reranker-V2-M3"]
+    end
+
+    subgraph STORAGE["💾 数据层"]
+        PG["🐘 PostgreSQL<br/>文档元数据 + 段落内容"]
+        QD["🔍 Qdrant<br/>向量索引 (768维)"]
+    end
+
+    subgraph EXTERNAL["☁️ 外部 API"]
+        GoogleAPI["Google Gemini Embedding<br/>gemini-embedding-001"]
+        DeepSeek["DeepSeek V3<br/>deepseek-chat"]
+    end
+
+    Browser --> UI
+    UI --> Chat & FileManager & StatusPanel
+    Chat & FileManager & StatusPanel -->|HTTP REST| API
+    API --> Indexer & Retrieval & ChatSvc
+    Indexer --> Embedding
+    Retrieval --> Embedding & Reranker
+    ChatSvc --> Retrieval & DeepSeek
+    Embedding -->|API 调用| GoogleAPI
+    Indexer --> PG & QD
+    Retrieval --> QD & PG
+</pre>
+</div>
+
+<!-- 2. 文档入库流程 -->
+<div class="diagram-container">
+<h2>二、文档入库流程 (Ingestion Pipeline)</h2>
+<pre class="mermaid">
+graph LR
+    A["📄 用户上传文件<br/>.txt .md .pdf .docx"] --> B["📤 API 接收<br/>POST /api/documents/upload"]
+    B --> C["🔤 文本提取<br/>pypdf / python-docx"]
+    C --> D["📐 文本规范化<br/>parser.normalize"]
+    D --> E["✂️ 段落分割<br/>parser.segment"]
+    E --> F["🏷️ 争议焦点标注<br/>parser.dispute_tags"]
+    F --> G["🔢 向量化<br/>Gemini Embedding<br/>768 维"]
+    G --> H["🐘 存入 PostgreSQL<br/>documents + paragraphs 表"]
+    G --> I["🔍 存入 Qdrant<br/>legal_documents +<br/>legal_paragraphs 集合"]
+
+    style A fill:#4f46e5,color:#fff
+    style G fill:#059669,color:#fff
+    style H fill:#3b82f6,color:#fff
+    style I fill:#d97706,color:#fff
+</pre>
+</div>
+
+<!-- 3. 双层检索流程 -->
+<div class="diagram-container">
+<h2>三、双层检索流程 (Dual-Layer Retrieval)</h2>
+<pre class="mermaid">
+graph TD
+    Q["🔍 用户查询<br/>'违法解除劳动合同赔偿标准'"] --> QT["📝 Query Understanding<br/>提取争议焦点"]
+    QT --> QE["🔢 查询向量化<br/>task_type=RETRIEVAL_QUERY"]
+
+    QE --> L1["📚 第一层：文档召回<br/>Qdrant legal_documents<br/>top_k=5"]
+    L1 --> L2["📖 第二层：段落召回<br/>Qdrant legal_paragraphs<br/>按 doc_id 过滤"]
+    L2 --> RR["🔄 Reranker 重排序<br/>BGE-Reranker-V2-M3<br/>交叉编码器精排"]
+    RR --> EX["💡 匹配解释生成<br/>DeepSeek V3 API<br/>说明段落相关性"]
+    EX --> VAL["✅ 溯源校验<br/>citation 完整性检查<br/>snippet 提取"]
+    VAL --> RES["📊 返回结果<br/>文档 + 段落证据 + 引用"]
+
+    style Q fill:#4f46e5,color:#fff
+    style QE fill:#059669,color:#fff
+    style L1 fill:#d97706,color:#fff
+    style L2 fill:#d97706,color:#fff
+    style RR fill:#dc2626,color:#fff
+    style EX fill:#7c3aed,color:#fff
+    style RES fill:#4f46e5,color:#fff
+</pre>
+</div>
+
+<!-- 4. 对话流程 -->
+<div class="diagram-container">
+<h2>四、对话流程 (Grounded Chat)</h2>
+<pre class="mermaid">
+graph TD
+    Q["💬 用户提问"] --> RET["🔍 检索证据<br/>复用双层检索管线"]
+    RET --> |"有证据"| CTX["📋 构建上下文<br/>拼接证据片段"]
+    RET --> |"无证据"| FB["🤖 直接回答<br/>DeepSeek V3<br/>non-grounded 模式"]
+    CTX --> GEN["🤖 DeepSeek V3 生成<br/>基于证据的 grounded 回答"]
+    GEN --> CIT["📎 引用标注<br/>溯源到具体文档行号"]
+    CIT --> RES["📊 返回回答 + 引用"]
+
+    style Q fill:#4f46e5,color:#fff
+    style GEN fill:#7c3aed,color:#fff
+    style RES fill:#059669,color:#fff
+</pre>
+</div>
+
+<!-- 5. 数据存储结构 -->
+<div class="diagram-container">
+<h2>五、数据存储结构</h2>
+<pre class="mermaid">
+graph LR
+    subgraph PG["🐘 PostgreSQL (port 5432)"]
+        DT["documents 表<br/>─────────────<br/>doc_id (PK)<br/>file_name<br/>source_path<br/>version_id<br/>total_lines<br/>normalized_content<br/>created_at / updated_at"]
+        PT["paragraphs 表<br/>─────────────<br/>para_id (PK)<br/>doc_id (FK → documents)<br/>line_start / line_end<br/>content<br/>dispute_tags<br/>created_at"]
+        DT ||--o{ PT
+    end
+
+    subgraph QD["🔍 Qdrant (port 6333)"]
+        DC["legal_documents 集合<br/>─────────────<br/>向量: 768维, cosine<br/>payload: doc_id,<br/>file_name, version_id"]
+        PC["legal_paragraphs 集合<br/>─────────────<br/>向量: 768维, cosine<br/>payload: para_id, doc_id,<br/>line_start, line_end,<br/>dispute_tags"]
+        DC -.->|doc_id 过滤| PC
+    end
+</pre>
+</div>
+
+<!-- 6. 技术栈 -->
+<div class="diagram-container">
+<h2>六、技术栈与外部依赖</h2>
+<pre class="mermaid">
+graph TB
+    subgraph STACK["技术栈"]
+        direction TB
+        FE["前端<br/>HTML + CSS + Vanilla JS"]
+        BE["后端<br/>FastAPI + Uvicorn"]
+        DB1["PostgreSQL 16<br/>Docker: legal-search-postgres"]
+        DB2["Qdrant<br/>Docker: legal-search-qdrant"]
+        EMB["Embedding<br/>Google gemini-embedding-001<br/>(fallback: BAAI/bge-m3 本地)"]
+        RERK["Reranker<br/>BAAI/bge-reranker-v2-m3<br/>(本地 Cross-Encoder)"]
+        LLM["LLM<br/>DeepSeek V3 API<br/>(解释生成 + 对话)"]
+        PY["Python 环境<br/>Conda: legal-search"]
+    end
+
+    FE -->|HTTP| BE
+    BE --> EMB & RERK & LLM
+    BE --> DB1 & DB2
+
+    style FE fill:#3b82f6,color:#fff
+    style BE fill:#059669,color:#fff
+    style DB1 fill:#3b82f6,color:#fff
+    style DB2 fill:#d97706,color:#fff
+    style EMB fill:#dc2626,color:#fff
+    style RERK fill:#dc2626,color:#fff
+    style LLM fill:#7c3aed,color:#fff
+</pre>
+</div>
+
+<div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#4f46e5"></div>用户交互</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#059669"></div>向量化 / 就绪</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>数据存储</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div>向量检索</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div>模型推理</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div>LLM 生成</div>
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#1e40af',
+    primaryTextColor: '#e2e8f0',
+    primaryBorderColor: '#3b82f6',
+    lineColor: '#64748b',
+    secondaryColor: '#1e293b',
+    tertiaryColor: '#0f172a',
+    fontSize: '13px'
+  },
+  flowchart: {
+    htmlLabels: true,
+    curve: 'basis',
+    padding: 15
+  }
+});
+</script>
+</body>
+</html>
