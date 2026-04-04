@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -28,7 +28,7 @@ from app.models.schemas import (
     SearchResponse,
 )
 from app.services.indexer import ingest_document, delete_document
-from app.services.chat import execute_grounded_chat
+from app.services.chat import execute_grounded_chat, stream_grounded_chat
 from app.services.retrieval import execute_search
 from app.services.traceability import validate_and_enrich_results, TraceabilityValidationError
 
@@ -158,6 +158,35 @@ async def grounded_chat(
         return JSONResponse(status_code=422, content=e.error.model_dump())
     except Exception as e:
         logger.exception("Grounded chat failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/chat/stream",
+    responses={
+        503: {"model": ErrorResponse, "description": "Service not ready"},
+        422: {"model": ErrorResponse, "description": "Citation metadata validation failed"},
+    },
+)
+async def grounded_chat_stream(
+    request: ChatRequest,
+    db: Session = Depends(get_session),
+):
+    """Stream chat output with the same grounding pipeline used by /chat."""
+    _ensure_retrieval_ready()
+    try:
+        return StreamingResponse(
+            stream_grounded_chat(request, db),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except TraceabilityValidationError as e:
+        return JSONResponse(status_code=422, content=e.error.model_dump())
+    except Exception as e:
+        logger.exception("Grounded chat stream failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 

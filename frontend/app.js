@@ -3,6 +3,7 @@ const SESSION_STORAGE_KEY = "chatSessionsV2";
 const ACTIVE_SESSION_KEY = "activeChatSessionIdV2";
 const MAX_SESSIONS = 30;
 const MAX_MESSAGES_PER_SESSION = 120;
+const SIDEBAR_BREAKPOINT = 900;
 
 const app = document.getElementById("app");
 const sidebarToggle = document.getElementById("sidebarToggle");
@@ -10,7 +11,13 @@ const sidebarToggle = document.getElementById("sidebarToggle");
 const welcomePanel = document.getElementById("welcomePanel");
 const chat = document.getElementById("chat");
 const panelFiles = document.getElementById("panelFiles");
+const panelContractReview = document.getElementById("panelContractReview");
 const panelStatus = document.getElementById("panelStatus");
+const citationSidebar = document.getElementById("citationSidebar");
+const citationSidebarBody = document.getElementById("citationSidebarBody");
+const citationSidebarTitle = document.getElementById("citationSidebarTitle");
+const citationSidebarClose = document.getElementById("citationSidebarClose");
+const citationSidebarResize = document.getElementById("citationSidebarResize");
 const composerWrap = document.getElementById("composerWrap");
 
 const composer = document.getElementById("composer");
@@ -18,9 +25,14 @@ const input = document.getElementById("input");
 const historyList = document.getElementById("historyList");
 
 const menuFiles = document.getElementById("menuFiles");
+const menuContractReview = document.getElementById("menuContractReview");
 const menuStatus = document.getElementById("menuStatus");
 const uploadArea = document.getElementById("uploadArea");
 const fileFeedback = document.getElementById("fileFeedback");
+
+const CITATION_SIDEBAR_MIN_WIDTH = 280;
+const CITATION_SIDEBAR_DEFAULT_WIDTH = 360;
+const CITATION_SIDEBAR_MAX_WIDTH = 720;
 
 let chatSessions = loadSessions();
 let activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY) || null;
@@ -94,18 +106,21 @@ function touchSession(session) {
 }
 
 function setMenuActive(target) {
-  [menuFiles, menuStatus].forEach((el) => el.classList.remove("active"));
+  [menuFiles, menuContractReview, menuStatus].forEach((el) => el.classList.remove("active"));
   if (target === "files") menuFiles.classList.add("active");
+  if (target === "contract-review") menuContractReview.classList.add("active");
   if (target === "status") menuStatus.classList.add("active");
 }
 
 function hidePanels() {
   panelFiles.classList.add("hidden");
+  panelContractReview.classList.add("hidden");
   panelStatus.classList.add("hidden");
 }
 
 function showWelcome() {
   hidePanels();
+  closeCitationSidebar();
   welcomePanel.style.display = "";
   chat.style.display = "none";
   composerWrap.classList.remove("hidden");
@@ -121,11 +136,13 @@ function showChat() {
 }
 
 function showPanel(view) {
+  closeCitationSidebar();
   welcomePanel.style.display = "none";
   chat.style.display = "none";
   composerWrap.classList.add("hidden");
 
   panelFiles.classList.toggle("hidden", view !== "files");
+  panelContractReview.classList.toggle("hidden", view !== "contract-review");
   panelStatus.classList.toggle("hidden", view !== "status");
   setMenuActive(view);
 
@@ -192,40 +209,86 @@ function nl2br(text) {
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
-function buildAssistantHtml(answer, citations) {
-  let html = `<div class="answer-title">助手回答</div><p>${nl2br(answer || "已收到你的消息。")}</p>`;
+function encodeCitations(citations) {
+  return escapeHtml(encodeURIComponent(JSON.stringify(citations || [])));
+}
 
+function decodeCitations(encoded) {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(encoded || ""));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getCitationSidebarMaxWidth() {
+  return Math.max(
+    CITATION_SIDEBAR_MIN_WIDTH,
+    Math.min(CITATION_SIDEBAR_MAX_WIDTH, window.innerWidth - 280)
+  );
+}
+
+function setCitationSidebarWidth(width) {
+  const clamped = Math.min(Math.max(width, CITATION_SIDEBAR_MIN_WIDTH), getCitationSidebarMaxWidth());
+  citationSidebar.style.width = `${clamped}px`;
+  citationSidebar.style.minWidth = `${clamped}px`;
+}
+
+function buildCitationHtml(citations) {
   if (Array.isArray(citations) && citations.length > 0) {
-    html += `
-      <details class="citation-wrap">
-        <summary class="citation-toggle">
+    return `
+      <div class="citation-wrap">
+        <button class="citation-trigger" type="button" data-citations="${encodeCitations(citations)}">
           <span>引用来源（${citations.length}）</span>
-          <span class="citation-toggle-text">点击展开/收起</span>
-        </summary>
-        <div class="citation-list">
-    `;
-    citations.forEach((c, index) => {
-      const lineStart = Number.isFinite(c.line_start) ? c.line_start : "-";
-      const lineEnd = Number.isFinite(c.line_end) ? c.line_end : "-";
-      const score = Number.isFinite(c.similarity_score) ? `${(c.similarity_score * 100).toFixed(1)}%` : "--";
-      html += `
-        <div class="citation">
-          <div class="citation-meta">
-            <span class="source-badge">来源${index + 1}</span>
-            <span class="source-auth">真实来源</span>
-            <span class="citation-origin">${escapeHtml(c.file_name || "来源")} · ${lineStart}-${lineEnd} · ${score}</span>
-          </div>
-          <div class="citation-snippet">${nl2br((c.snippet || "").trim())}</div>
-        </div>
-      `;
-    });
-    html += `
-        </div>
-      </details>
+          <span class="citation-toggle-text">点击查看</span>
+        </button>
+      </div>
     `;
   }
 
+  return "";
+}
+
+function buildCitationListHtml(citations) {
+  if (!Array.isArray(citations) || citations.length === 0) {
+    return `<p class="panel-text">当前回答没有可显示的引用案例。</p>`;
+  }
+
+  let html = `<div class="citation-list">`;
+  citations.forEach((c, index) => {
+    const lineStart = Number.isFinite(c.line_start) ? c.line_start : "-";
+    const lineEnd = Number.isFinite(c.line_end) ? c.line_end : "-";
+    const score = Number.isFinite(c.similarity_score) ? `${(c.similarity_score * 100).toFixed(1)}%` : "--";
+    html += `
+      <div class="citation">
+        <div class="citation-meta">
+          <span class="source-badge">来源${index + 1}</span>
+          <span class="source-auth">真实来源</span>
+          <span class="citation-origin">${escapeHtml(c.file_name || "来源")} · ${lineStart}-${lineEnd} · ${score}</span>
+        </div>
+        <div class="citation-snippet">${nl2br((c.snippet || "").trim())}</div>
+      </div>
+    `;
+  });
+  html += `</div>`;
   return html;
+}
+
+function closeCitationSidebar() {
+  citationSidebar.classList.add("hidden");
+  citationSidebar.classList.remove("open");
+}
+
+function openCitationSidebar(citations) {
+  citationSidebarTitle.textContent = `引用案例（${citations.length}）`;
+  citationSidebarBody.innerHTML = buildCitationListHtml(citations);
+  citationSidebar.classList.remove("hidden");
+  citationSidebar.classList.add("open");
+}
+
+function buildAssistantHtml(answer, citations) {
+  return `<div class="answer-title">助手回答</div><p>${nl2br(answer || "已收到你的消息。")}</p>${buildCitationHtml(citations)}`;
 }
 
 function appendMessage(role, html, shouldScroll = true) {
@@ -263,7 +326,7 @@ function appendUserMessage(text, save = true) {
 }
 
 function appendLoadingMessage() {
-  return appendMessage("loading-msg", `<p>思考中...</p>`);
+  return appendMessage("loading-msg", `<p>思考中<span class="thinking-dots">...</span></p>`);
 }
 
 function appendErrorMessage(message, save = false) {
@@ -273,7 +336,7 @@ function appendErrorMessage(message, save = false) {
   }
 }
 
-function appendChatResponse(response, save = true) {
+function normalizeChatResponse(response) {
   const citations = Array.isArray(response.citations)
     ? response.citations.map((c) => ({
         file_name: c.file_name,
@@ -285,6 +348,28 @@ function appendChatResponse(response, save = true) {
     : [];
 
   const answer = response.answer || "已收到你的消息。";
+  return { answer, citations };
+}
+
+function createStreamingAssistantMessage() {
+  const node = appendMessage("", `<div class="answer-title">助手回答</div><p></p>`);
+  const body = node.querySelector("p");
+
+  return {
+    node,
+    update(answer) {
+      body.innerHTML = nl2br(answer || "");
+      chat.scrollTop = chat.scrollHeight;
+    },
+    finalize(answer, citations) {
+      node.innerHTML = buildAssistantHtml(answer, citations);
+      chat.scrollTop = chat.scrollHeight;
+    },
+  };
+}
+
+function appendChatResponse(response, save = true) {
+  const { answer, citations } = normalizeChatResponse(response);
   appendMessage("", buildAssistantHtml(answer, citations));
 
   if (save) {
@@ -292,7 +377,21 @@ function appendChatResponse(response, save = true) {
   }
 }
 
+function consumeJsonLines(buffer, chunk, onItem) {
+  const lines = `${buffer}${chunk}`.split("\n");
+  const rest = lines.pop() || "";
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    onItem(JSON.parse(trimmed));
+  });
+
+  return rest;
+}
+
 function renderSessionMessages(session) {
+  closeCitationSidebar();
   chat.innerHTML = "";
 
   session.messages.forEach((msg) => {
@@ -378,10 +477,13 @@ async function executeSearch(query) {
 
   showChat();
   appendUserMessage(query, true);
-  const loadingNode = appendLoadingMessage();
+  let loadingNode = appendLoadingMessage();
+  let assistantStream = null;
+  let answerText = "";
+  let finalized = false;
 
   try {
-    const response = await fetch(`${API_BASE}/chat`, {
+    const response = await fetch(`${API_BASE}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -391,18 +493,79 @@ async function executeSearch(query) {
       }),
     });
 
-    loadingNode.remove();
-
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
+      if (loadingNode?.isConnected) {
+        loadingNode.remove();
+      }
+      const raw = await response.text();
+      let err = {};
+      try {
+        err = raw ? JSON.parse(raw) : {};
+      } catch {
+        err = { detail: raw };
+      }
       appendErrorMessage(`请求失败 (${response.status})：${err.detail || "未知错误"}`, true);
       return;
     }
 
-    const data = await response.json();
-    appendChatResponse(data, true);
+    if (!response.body) {
+      throw new Error("当前环境不支持流式响应");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    const handleStreamItem = (item) => {
+      if (item.type === "delta") {
+        if (loadingNode?.isConnected) {
+          loadingNode.remove();
+          loadingNode = null;
+        }
+        if (!assistantStream) {
+          assistantStream = createStreamingAssistantMessage();
+        }
+        answerText += item.delta || "";
+        assistantStream.update(answerText);
+        return;
+      }
+
+      if (item.type === "done") {
+        if (loadingNode?.isConnected) {
+          loadingNode.remove();
+          loadingNode = null;
+        }
+        if (!assistantStream) {
+          assistantStream = createStreamingAssistantMessage();
+        }
+        const normalized = normalizeChatResponse(item);
+        answerText = normalized.answer || answerText || "已收到你的消息。";
+        assistantStream.finalize(answerText, normalized.citations);
+        pushMessageToActive({ type: "assistant", answer: answerText, citations: normalized.citations });
+        finalized = true;
+        return;
+      }
+
+      if (item.type === "error") {
+        throw new Error(item.detail || "流式响应失败");
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer = consumeJsonLines(buffer, decoder.decode(value, { stream: true }), handleStreamItem);
+    }
+
+    buffer = consumeJsonLines(buffer, decoder.decode(), handleStreamItem);
+
+    if (!finalized) {
+      throw new Error("流式响应提前结束");
+    }
   } catch (err) {
-    loadingNode.remove();
+    if (loadingNode?.isConnected) {
+      loadingNode.remove();
+    }
     appendErrorMessage(`无法连接到后端服务：${err.message}`, true);
   }
 }
@@ -564,10 +727,42 @@ document.getElementById("newChatBtn").addEventListener("click", () => {
 });
 
 menuFiles.addEventListener("click", () => showPanel("files"));
+menuContractReview.addEventListener("click", () => showPanel("contract-review"));
 menuStatus.addEventListener("click", () => showPanel("status"));
+
+chat.addEventListener("click", (event) => {
+  const trigger = event.target.closest(".citation-trigger");
+  if (!trigger) return;
+  const citations = decodeCitations(trigger.dataset.citations || "");
+  openCitationSidebar(citations);
+});
 
 document.querySelectorAll(".panel-close").forEach((btn) => {
   btn.addEventListener("click", restoreConversationView);
+});
+
+citationSidebarClose.addEventListener("click", closeCitationSidebar);
+
+citationSidebarResize.addEventListener("pointerdown", (event) => {
+  if (window.innerWidth <= SIDEBAR_BREAKPOINT) return;
+
+  event.preventDefault();
+  document.body.classList.add("resizing-citation-sidebar");
+
+  const onPointerMove = (moveEvent) => {
+    setCitationSidebarWidth(window.innerWidth - moveEvent.clientX);
+  };
+
+  const stopResize = () => {
+    document.body.classList.remove("resizing-citation-sidebar");
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopResize);
+    window.removeEventListener("pointercancel", stopResize);
+  };
+
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", stopResize);
+  window.addEventListener("pointercancel", stopResize);
 });
 
 document.getElementById("docFileInput").addEventListener("change", async (event) => {
@@ -620,12 +815,38 @@ document.getElementById("bootstrapBtn").addEventListener("click", async () => {
   }
 });
 
+function syncSidebarToggleLabel() {
+  const isDesktop = window.innerWidth > SIDEBAR_BREAKPOINT;
+  const collapsed = app.classList.contains("sidebar-collapsed");
+  const opened = app.classList.contains("sidebar-open");
+  sidebarToggle.setAttribute(
+    "aria-label",
+    isDesktop ? (collapsed ? "展开左侧项目栏" : "折叠左侧项目栏") : opened ? "收起左侧项目栏" : "展开左侧项目栏"
+  );
+}
+
 sidebarToggle.addEventListener("click", () => {
-  app.classList.toggle("sidebar-open");
+  if (window.innerWidth > SIDEBAR_BREAKPOINT) {
+    app.classList.toggle("sidebar-collapsed");
+  } else {
+    app.classList.toggle("sidebar-open");
+  }
+
+  syncSidebarToggleLabel();
 });
 
 window.addEventListener("resize", () => {
-  if (window.innerWidth > 900) {
+  if (window.innerWidth > SIDEBAR_BREAKPOINT) {
     app.classList.remove("sidebar-open");
+    setCitationSidebarWidth(parseFloat(citationSidebar.style.width) || CITATION_SIDEBAR_DEFAULT_WIDTH);
+  } else {
+    app.classList.remove("sidebar-collapsed");
+    citationSidebar.style.removeProperty("width");
+    citationSidebar.style.removeProperty("min-width");
   }
+
+  syncSidebarToggleLabel();
 });
+
+setCitationSidebarWidth(CITATION_SIDEBAR_DEFAULT_WIDTH);
+syncSidebarToggleLabel();

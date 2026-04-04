@@ -9,7 +9,9 @@ Pipeline:
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 
 import httpx
 from sqlalchemy.orm import Session
@@ -123,12 +125,8 @@ def _fallback_answer(citations: list[ChatCitation]) -> str:
     return "\n".join(lines)
 
 
-async def _ask_deepseek(query: str, citations: list[ChatCitation]) -> str:
-    """Ask DeepSeek, grounded when evidence exists, general otherwise."""
-    if not DEEPSEEK_API_KEY:
-        logger.warning("DEEPSEEK_API_KEY is empty, using fallback answer")
-        return _fallback_answer(citations)
-
+def _build_deepseek_payload(query: str, citations: list[ChatCitation], *, stream: bool) -> dict:
+    """Build a DeepSeek chat-completions payload."""
     if citations:
         evidence_context = _build_context(citations)
         system_prompt = (
@@ -153,6 +151,33 @@ async def _ask_deepseek(query: str, citations: list[ChatCitation]) -> str:
         )
         temperature = 0.3
 
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": 700,
+    }
+    if stream:
+        payload["stream"] = True
+    return payload
+
+
+def _iter_text_chunks(text: str, chunk_size: int = 24) -> list[str]:
+    """Split fallback text into small chunks for frontend streaming."""
+    if not text:
+        return []
+    return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+
+async def _ask_deepseek(query: str, citations: list[ChatCitation]) -> str:
+    """Ask DeepSeek, grounded when evidence exists, general otherwise."""
+    if not DEEPSEEK_API_KEY:
+        logger.warning("DEEPSEEK_API_KEY is empty, using fallback answer")
+        return _fallback_answer(citations)
+
     try:
         async with httpx.AsyncClient(timeout=45.0) as client:
             resp = await client.post(
@@ -161,15 +186,7 @@ async def _ask_deepseek(query: str, citations: list[ChatCitation]) -> str:
                     "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": DEEPSEEK_MODEL,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": temperature,
-                    "max_tokens": 700,
-                },
+                json=_build_deepseek_payload(query, citations, stream=False),
             )
     except Exception as exc:
         logger.warning("DeepSeek chat request failed: %s", exc)
@@ -190,6 +207,74 @@ async def _ask_deepseek(query: str, citations: list[ChatCitation]) -> str:
     return _fallback_answer(citations)
 
 
+async def _stream_deepseek(query: str, citations: list[ChatCitation]) -> AsyncIterator[str]:
+    """Stream DeepSeek answer tokens, falling back to chunked local text when needed."""
+    if not DEEPSEEK_API_KEY:
+        logger.warning("DEEPSEEK_API_KEY is empty, using fallback answer")
+        for chunk in _iter_text_chunks(_fallback_answer(citations)):
+            yield chunk
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+            async with client.stream(
+                "POST",
+                f"{DEEPSEEK_BASE_URL}/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=_build_deepseek_payload(query, citations, stream=True),
+            ) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread()).decode("utf-8", errors="ignore")
+                    logger.warning("DeepSeek stream failed: status=%s body=%s", resp.status_code, body[:300])
+                    for chunk in _iter_text_chunks(_fallback_answer(citations)):
+                        yield chunk
+                    return
+
+                streamed_any = False
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+
+                    try:
+                        payload = json.loads(data)
+                    except json.JSONDecodeError:
+                        logger.debug("Skipping non-JSON DeepSeek stream payload: %s", data[:120])
+                        continue
+
+                    choices = payload.get("choices") or []
+                    if not choices:
+                        continue
+
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if not content:
+                        continue
+
+                    streamed_any = True
+                    yield str(content)
+
+                if streamed_any:
+                    return
+    except Exception as exc:
+        logger.warning("DeepSeek streaming request failed: %s", exc)
+
+    for chunk in _iter_text_chunks(_fallback_answer(citations)):
+        yield chunk
+
+
+def _encode_stream_event(payload: dict) -> str:
+    """Encode a streaming event as a single NDJSON line."""
+    return json.dumps(payload, ensure_ascii=False) + "\n"
+
+
 async def execute_grounded_chat(
     request: ChatRequest,
     db: Session,
@@ -205,3 +290,43 @@ async def execute_grounded_chat(
         grounded=bool(citations),
         used_documents=len({c.doc_id for c in citations}),
     )
+
+
+async def stream_grounded_chat(
+    request: ChatRequest,
+    db: Session,
+) -> AsyncIterator[str]:
+    """Stream grounded chat as NDJSON events for the frontend."""
+    citations = _collect_citations(request, db)
+    grounded = bool(citations)
+    used_documents = len({c.doc_id for c in citations})
+    answer_parts: list[str] = []
+
+    yield _encode_stream_event(
+        {
+            "type": "start",
+            "query": request.query,
+            "grounded": grounded,
+            "used_documents": used_documents,
+        }
+    )
+
+    try:
+        async for chunk in _stream_deepseek(request.query, citations):
+            answer_parts.append(chunk)
+            yield _encode_stream_event({"type": "delta", "delta": chunk})
+
+        answer = "".join(answer_parts).strip() or _fallback_answer(citations)
+        yield _encode_stream_event(
+            {
+                "type": "done",
+                "query": request.query,
+                "answer": answer,
+                "citations": [c.model_dump() for c in citations],
+                "grounded": grounded,
+                "used_documents": used_documents,
+            }
+        )
+    except Exception as exc:
+        logger.exception("Grounded chat stream failed")
+        yield _encode_stream_event({"type": "error", "detail": str(exc)})

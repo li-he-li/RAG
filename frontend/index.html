@@ -26,6 +26,7 @@
 
         <nav class="menu" aria-label="主菜单">
           <button class="menu-item" id="menuFiles" type="button">文件管理</button>
+          <button class="menu-item" id="menuContractReview" type="button">合同审查</button>
           <button class="menu-item" id="menuStatus" type="button">系统状态</button>
         </nav>
 
@@ -37,10 +38,13 @@
 
       <main class="main" aria-label="主内容区">
         <header class="topbar">
-          <button class="icon-btn" id="sidebarToggle" type="button" aria-label="展开侧边栏">☰</button>
           <div class="topbar-title">
-            <h1>新对话</h1>
-            <p>智能检索助手</p>
+            <button class="icon-btn topbar-toggle" id="sidebarToggle" type="button" aria-label="折叠左侧项目栏">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="4"></rect>
+                <path d="M10 6v12"></path>
+              </svg>
+            </button>
           </div>
         </header>
 
@@ -76,6 +80,16 @@
                 <div class="file-feedback hidden" id="fileFeedback" aria-live="polite"></div>
 
                 <div class="doc-list" id="docList"></div>
+              </div>
+            </section>
+
+            <section class="panel-view hidden" id="panelContractReview" aria-label="合同审查面板">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>合同审查</h3>
+                  <button class="panel-close" data-close="panelContractReview" type="button" aria-label="关闭">×</button>
+                </div>
+                <p class="panel-text">合同审查模块入口已添加。</p>
               </div>
             </section>
 
@@ -131,6 +145,17 @@
               </form>
             </footer>
           </section>
+
+          <aside class="citation-sidebar hidden" id="citationSidebar" aria-label="引用案例侧栏">
+            <div class="citation-sidebar-resize" id="citationSidebarResize" aria-hidden="true"></div>
+            <div class="citation-sidebar-head">
+              <h3 id="citationSidebarTitle">引用案例</h3>
+              <button class="citation-sidebar-close" id="citationSidebarClose" type="button" aria-label="关闭引用案例">×</button>
+            </div>
+            <div class="citation-sidebar-body" id="citationSidebarBody">
+              <p class="panel-text">点击聊天中的“引用来源”后，这里会显示对应案例。</p>
+            </div>
+          </aside>
         </div>
       </main>
     </div>
