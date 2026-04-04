@@ -97,6 +97,9 @@ python scripts/hook_checks.py pre-push
 - Chat composer now supports a shared upload entry that routes by mode:
   - `chat` mode uploads session attachments for normal conversation.
   - `contract-review` mode uploads review-target contracts.
+- The left `合同审查` panel is now a standard template library:
+  - Templates are uploaded, listed, and deleted through the dedicated left-side panel.
+  - Template management is separate from session attachments and review-target files.
 - The right sidebar is now tabbed (`Attachments` / `Citations`) and remains hidden by default.
   - It opens when attachments are uploaded or when citation sources are clicked.
   - Users can close the sidebar manually at any time.

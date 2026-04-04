@@ -84,12 +84,27 @@
             </section>
 
             <section class="panel-view hidden" id="panelContractReview" aria-label="合同审查面板">
-              <div class="panel">
+              <div class="panel template-panel">
                 <div class="panel-header">
-                  <h3>合同审查</h3>
+                  <h3>标准模板库</h3>
                   <button class="panel-close" data-close="panelContractReview" type="button" aria-label="关闭">×</button>
                 </div>
-                <p class="panel-text">合同审查模块入口已添加。</p>
+                <p class="panel-text">上传并管理标准合同模板，供合同审查模式选择和复用。</p>
+
+                <label class="upload-box template-upload-box" id="templateUploadArea" for="templateFileInput">
+                  <strong>点击或拖拽上传标准模板</strong>
+                  <span>支持 .txt .md .pdf .docx 文件</span>
+                </label>
+                <input id="templateFileInput" type="file" accept=".txt,.md,.pdf,.docx,.doc" />
+                <div class="file-feedback hidden" id="templateFeedback" aria-live="polite"></div>
+
+                <div class="template-list-head">
+                  <h4>模板列表</h4>
+                  <span id="templateListCount">0 个</span>
+                </div>
+                <div class="template-list" id="templateList">
+                  <div class="template-empty">暂无标准模板</div>
+                </div>
               </div>
             </section>
 

@@ -36,6 +36,11 @@ const menuContractReview = document.getElementById("menuContractReview");
 const menuStatus = document.getElementById("menuStatus");
 const uploadArea = document.getElementById("uploadArea");
 const fileFeedback = document.getElementById("fileFeedback");
+const templateUploadArea = document.getElementById("templateUploadArea");
+const templateFileInput = document.getElementById("templateFileInput");
+const templateFeedback = document.getElementById("templateFeedback");
+const templateList = document.getElementById("templateList");
+const templateListCount = document.getElementById("templateListCount");
 
 const CITATION_SIDEBAR_MIN_WIDTH = 280;
 const CITATION_SIDEBAR_DEFAULT_WIDTH = 360;
@@ -72,6 +77,35 @@ function normalizeRightSidebarTab(tab) {
   return RIGHT_SIDEBAR_TABS.has(tab) ? tab : "attachments";
 }
 
+function normalizeReviewTempFile(file) {
+  if (!file || typeof file !== "object") return null;
+
+  const id = typeof file.id === "string" && file.id.trim() ? file.id : null;
+  const fileName = typeof file.fileName === "string" && file.fileName.trim() ? file.fileName : null;
+  if (!id || !fileName) return null;
+
+  return {
+    id,
+    fileName,
+    status: typeof file.status === "string" && file.status.trim() ? file.status : "ready",
+    size: Number.isFinite(file.size) ? file.size : null,
+    uploadedAt: Number.isFinite(file.uploadedAt) ? file.uploadedAt : Date.now(),
+  };
+}
+
+function normalizeReviewTemplate(template) {
+  if (!template || typeof template !== "object") return null;
+  const id = typeof template.id === "string" && template.id.trim() ? template.id : null;
+  const name = typeof template.name === "string" && template.name.trim() ? template.name : null;
+  if (!id || !name) return null;
+
+  return {
+    id,
+    name,
+    score: Number.isFinite(template.score) ? template.score : null,
+  };
+}
+
 function formatAttachmentSize(size) {
   if (!Number.isFinite(size) || size < 0) return "";
   if (size < 1024) return `${size} B`;
@@ -93,6 +127,14 @@ function loadSessions() {
         chatAttachments: Array.isArray(s.chatAttachments)
           ? s.chatAttachments.map(normalizeChatAttachment).filter(Boolean)
           : [],
+        reviewTempFiles: Array.isArray(s.reviewTempFiles)
+          ? s.reviewTempFiles.map(normalizeReviewTempFile).filter(Boolean)
+          : [],
+        reviewRecommendedTemplate: normalizeReviewTemplate(s.reviewRecommendedTemplate),
+        reviewSelectedTemplateId:
+          typeof s.reviewSelectedTemplateId === "string" && s.reviewSelectedTemplateId.trim()
+            ? s.reviewSelectedTemplateId
+            : null,
         rightSidebarTab: normalizeRightSidebarTab(s.rightSidebarTab),
         messages: s.messages
           .filter((m) => m && typeof m.type === "string")
@@ -135,6 +177,9 @@ function createSession(firstQuery = "") {
     updatedAt: Date.now(),
     mode: draftSessionMode,
     chatAttachments: [],
+    reviewTempFiles: [],
+    reviewRecommendedTemplate: null,
+    reviewSelectedTemplateId: null,
     rightSidebarTab: "attachments",
     messages: [],
   };
@@ -159,12 +204,28 @@ function getRightSidebarTab() {
   return normalizeRightSidebarTab(getActiveSession()?.rightSidebarTab);
 }
 
-function syncRightSidebarAttachmentsSummary() {
+function renderRightSidebarAttachments() {
   if (!rightSidebarAttachmentsBody) return;
   const session = getActiveSession();
-  const count = Array.isArray(session?.chatAttachments) ? session.chatAttachments.length : 0;
-  rightSidebarAttachmentsBody.textContent =
-    count > 0 ? `当前会话已上传 ${count} 个附件。` : "上传文件后，这里会显示当前会话附件。";
+  const attachments = Array.isArray(session?.chatAttachments) ? session.chatAttachments : [];
+
+  if (attachments.length === 0) {
+    rightSidebarAttachmentsBody.className = "right-sidebar-empty";
+    rightSidebarAttachmentsBody.textContent = "上传文件后，这里会显示当前会话附件。";
+    return;
+  }
+
+  rightSidebarAttachmentsBody.className = "right-sidebar-attachment-list";
+  rightSidebarAttachmentsBody.innerHTML = attachments
+    .map(
+      (attachment) => `
+        <article class="right-sidebar-attachment-item">
+          <strong class="right-sidebar-attachment-name" title="${escapeHtml(attachment.fileName)}">${escapeHtml(attachment.fileName)}</strong>
+          <div class="right-sidebar-attachment-meta">${escapeHtml(formatAttachmentSize(attachment.size)) || "未知大小"}</div>
+        </article>
+      `
+    )
+    .join("");
 }
 
 function syncRightSidebarTabUi() {
@@ -191,7 +252,7 @@ function setRightSidebarTab(tab) {
     session.rightSidebarTab = nextTab;
     persistSessions();
   }
-  syncRightSidebarAttachmentsSummary();
+  renderRightSidebarAttachments();
   syncRightSidebarTabUi();
 }
 
@@ -199,7 +260,7 @@ function openRightSidebar(tab) {
   if (tab) {
     setRightSidebarTab(tab);
   } else {
-    syncRightSidebarAttachmentsSummary();
+    renderRightSidebarAttachments();
     syncRightSidebarTabUi();
   }
   citationSidebar.classList.remove("hidden");
@@ -210,31 +271,39 @@ function renderChatAttachments() {
   if (!chatAttachmentTray) return;
 
   const session = getActiveSession();
-  const attachments = Array.isArray(session?.chatAttachments) ? session.chatAttachments : [];
   const isReviewMode = getComposerMode() === "contract-review";
+  const chatAttachments = Array.isArray(session?.chatAttachments) ? session.chatAttachments : [];
+  const reviewTempFiles = Array.isArray(session?.reviewTempFiles) ? session.reviewTempFiles : [];
+  const visibleItems = isReviewMode ? reviewTempFiles : chatAttachments;
 
-  if (isReviewMode || attachments.length === 0) {
+  if (visibleItems.length === 0) {
     chatAttachmentTray.innerHTML = "";
     chatAttachmentTray.classList.add("hidden");
-    syncRightSidebarAttachmentsSummary();
+    renderRightSidebarAttachments();
     return;
   }
 
-  chatAttachmentTray.innerHTML = attachments
+  chatAttachmentTray.innerHTML = visibleItems
     .map(
-      (attachment) => `
-        <div class="composer-attachment-chip" data-attachment-id="${escapeHtml(attachment.id)}">
+      (item) => `
+        <div class="composer-attachment-chip" data-attachment-id="${escapeHtml(item.id)}">
           <div class="composer-attachment-meta">
-            <span class="composer-attachment-name" title="${escapeHtml(attachment.fileName)}">${escapeHtml(attachment.fileName)}</span>
-            <span class="composer-attachment-size">${escapeHtml(formatAttachmentSize(attachment.size))}</span>
+            <span class="composer-attachment-name" title="${escapeHtml(item.fileName)}">${escapeHtml(item.fileName)}</span>
+            <span class="composer-attachment-size">${escapeHtml(formatAttachmentSize(item.size))}</span>
           </div>
-          <button class="composer-attachment-remove" type="button" data-remove-attachment="${escapeHtml(attachment.id)}" aria-label="移除附件">×</button>
+          <button
+            class="composer-attachment-remove"
+            type="button"
+            data-remove-attachment="${isReviewMode ? "" : escapeHtml(item.id)}"
+            data-remove-review-file="${isReviewMode ? escapeHtml(item.id) : ""}"
+            aria-label="移除附件"
+          >×</button>
         </div>
       `
     )
     .join("");
   chatAttachmentTray.classList.remove("hidden");
-  syncRightSidebarAttachmentsSummary();
+  renderRightSidebarAttachments();
 }
 
 function addChatAttachments(files) {
@@ -257,6 +326,25 @@ function addChatAttachments(files) {
   openRightSidebar("attachments");
 }
 
+function addReviewTempFiles(files) {
+  if (!Array.isArray(files) || files.length === 0) return;
+
+  const session = ensureActiveSession(input.value.trim());
+  const nextFiles = files.map((file) => ({
+    id: `r_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    fileName: file.name,
+    status: "ready",
+    size: file.size,
+    uploadedAt: Date.now(),
+  }));
+
+  session.reviewTempFiles = [...session.reviewTempFiles, ...nextFiles];
+  touchSession(session);
+  renderHistory();
+  renderChatAttachments();
+  showChat();
+}
+
 function removeChatAttachment(attachmentId) {
   const session = getActiveSession();
   if (!session || !Array.isArray(session.chatAttachments)) return;
@@ -271,6 +359,18 @@ function removeChatAttachment(attachmentId) {
   if (session.chatAttachments.length === 0 && getRightSidebarTab() === "attachments") {
     closeCitationSidebar();
   }
+}
+
+function removeReviewTempFile(fileId) {
+  const session = getActiveSession();
+  if (!session || !Array.isArray(session.reviewTempFiles)) return;
+
+  const target = session.reviewTempFiles.find((file) => file.id === fileId);
+  if (!target) return;
+
+  session.reviewTempFiles = session.reviewTempFiles.filter((file) => file.id !== fileId);
+  touchSession(session);
+  renderChatAttachments();
 }
 
 function getComposerMode() {
@@ -351,6 +451,10 @@ function showPanel(view) {
     loadDocumentList();
   }
 
+  if (view === "contract-review") {
+    loadTemplateList();
+  }
+
   if (view === "status") {
     checkSystemStatus();
   }
@@ -365,11 +469,12 @@ function restoreConversationView() {
     showWelcome();
   }
   syncComposerModeUi();
-  syncRightSidebarAttachmentsSummary();
+  renderRightSidebarAttachments();
   syncRightSidebarTabUi();
 }
 
 let fileFeedbackTimer = null;
+let templateFeedbackTimer = null;
 
 function showFileFeedback(message, type = "info", autoHideMs = 4500) {
   if (!fileFeedback) return;
@@ -395,6 +500,32 @@ function setUploadBusy(isBusy) {
   }
   if (uploadArea) {
     uploadArea.classList.toggle("uploading", isBusy);
+  }
+}
+
+function showTemplateFeedback(message, type = "info", autoHideMs = 4500) {
+  if (!templateFeedback) return;
+  if (templateFeedbackTimer) {
+    clearTimeout(templateFeedbackTimer);
+    templateFeedbackTimer = null;
+  }
+  templateFeedback.className = `file-feedback ${type}`;
+  templateFeedback.textContent = message;
+  templateFeedback.classList.remove("hidden");
+
+  if (autoHideMs > 0) {
+    templateFeedbackTimer = setTimeout(() => {
+      templateFeedback.classList.add("hidden");
+    }, autoHideMs);
+  }
+}
+
+function setTemplateUploadBusy(isBusy) {
+  if (templateFileInput) {
+    templateFileInput.disabled = isBusy;
+  }
+  if (templateUploadArea) {
+    templateUploadArea.classList.toggle("uploading", isBusy);
   }
 }
 
@@ -579,6 +710,23 @@ function appendChatResponse(response, save = true) {
   if (save) {
     pushMessageToActive({ type: "assistant", answer, citations });
   }
+}
+
+function executeContractReviewNoFileResponse(query) {
+  const session = ensureActiveSession(query);
+  activeSessionId = session.id;
+  persistSessions();
+  renderHistory();
+
+  showChat();
+  appendUserMessage(query, true);
+  appendChatResponse(
+    {
+      answer: "当前无合同可审查。请先上传待审合同文件，再发起合同审查。",
+      citations: [],
+    },
+    true
+  );
 }
 
 function consumeJsonLines(buffer, chunk, onItem) {
@@ -865,6 +1013,90 @@ async function loadDocumentList() {
   }
 }
 
+function updateTemplateListCount(count) {
+  if (!templateListCount) return;
+  templateListCount.textContent = `${count} 个`;
+}
+
+function showTemplateEmptyHint(text = "暂无标准模板") {
+  if (!templateList) return;
+  templateList.innerHTML = `<div class="template-empty">${escapeHtml(text)}</div>`;
+  updateTemplateListCount(0);
+}
+
+function buildTemplateItem(data) {
+  const docId = String(data.doc_id || "");
+  const paragraphCount = Number.isFinite(data.paragraphs_indexed) ? data.paragraphs_indexed : 0;
+  const lineCount = Number.isFinite(data.total_lines) ? data.total_lines : 0;
+  const fileName = escapeHtml(String(data.file_name || ""));
+  const shortId = escapeHtml(String(data.doc_id || "")).slice(0, 8);
+
+  return `
+    <article class="template-item" data-template-id="${escapeHtml(docId)}">
+      <div class="template-item-info">
+        <strong title="${fileName || shortId}">${fileName || shortId || "未知模板"}</strong>
+        <span>${paragraphCount} 段 · ${lineCount} 行</span>
+      </div>
+      <button class="template-delete" type="button" data-template-delete="${escapeHtml(docId)}">删除</button>
+    </article>
+  `;
+}
+
+function renderTemplateList(items) {
+  if (!templateList) return;
+  if (!Array.isArray(items) || items.length === 0) {
+    showTemplateEmptyHint();
+    return;
+  }
+
+  templateList.innerHTML = items.map((item) => buildTemplateItem(item)).join("");
+  updateTemplateListCount(items.length);
+}
+
+async function loadTemplateList() {
+  if (!templateList) return;
+  templateList.innerHTML = `<div class="template-empty">加载中...</div>`;
+  updateTemplateListCount(0);
+
+  try {
+    const response = await fetch(`${API_BASE}/templates?limit=200`);
+    if (!response.ok) {
+      throw new Error(`加载失败 (${response.status})`);
+    }
+    const list = await response.json();
+    renderTemplateList(Array.isArray(list) ? list : []);
+  } catch (err) {
+    showTemplateEmptyHint(`读取失败：${err.message || "请稍后重试"}`);
+  }
+}
+
+async function uploadTemplateFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE}/templates/upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `上传失败 (${response.status})`);
+  }
+
+  return response.json();
+}
+
+async function deleteTemplateFile(docId) {
+  const response = await fetch(`${API_BASE}/templates/${encodeURIComponent(docId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `删除失败 (${response.status})`);
+  }
+}
+
 async function checkSystemStatus() {
   const setStatus = (id, ready, text) => {
     const item = document.getElementById(id);
@@ -907,13 +1139,23 @@ if (activeSession && activeSession.messages.length > 0) {
   showWelcome();
 }
 syncComposerModeUi();
-syncRightSidebarAttachmentsSummary();
+renderRightSidebarAttachments();
 syncRightSidebarTabUi();
 
 composer.addEventListener("submit", (e) => {
   e.preventDefault();
   const query = input.value.trim();
   if (!query) return;
+
+  if (getComposerMode() === "contract-review") {
+    const reviewTempFiles = getActiveSession()?.reviewTempFiles || [];
+    if (reviewTempFiles.length === 0) {
+      executeContractReviewNoFileResponse(query);
+      input.value = "";
+      return;
+    }
+  }
+
   executeSearch(query);
   input.value = "";
 });
@@ -968,14 +1210,27 @@ chatAttachmentInput.addEventListener("change", (event) => {
 
 reviewContractInput.addEventListener("change", (event) => {
   if (event.target instanceof HTMLInputElement) {
+    const files = Array.from(event.target.files || []);
+    if (files.length > 0) {
+      addReviewTempFiles(files);
+    }
     event.target.value = "";
   }
 });
 
 chatAttachmentTray.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-remove-attachment]");
+  const target = event.target.closest("[data-remove-attachment],[data-remove-review-file]");
   if (!target) return;
-  removeChatAttachment(target.getAttribute("data-remove-attachment") || "");
+  const reviewFileId = target.getAttribute("data-remove-review-file") || "";
+  if (reviewFileId) {
+    removeReviewTempFile(reviewFileId);
+    return;
+  }
+
+  const attachmentId = target.getAttribute("data-remove-attachment") || "";
+  if (attachmentId) {
+    removeChatAttachment(attachmentId);
+  }
 });
 
 chat.addEventListener("click", (event) => {
@@ -1047,6 +1302,46 @@ document.getElementById("docFileInput").addEventListener("change", async (event)
   setUploadBusy(false);
   event.target.value = "";
 });
+
+if (templateFileInput) {
+  templateFileInput.addEventListener("change", async (event) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    setTemplateUploadBusy(true);
+    showTemplateFeedback("正在上传模板...", "info", 0);
+
+    try {
+      const file = files[0];
+      await uploadTemplateFile(file);
+      await loadTemplateList();
+      showTemplateFeedback(`上传成功：${file.name}`, "success", 3000);
+    } catch (err) {
+      showTemplateFeedback(`上传失败：${err.message}`, "error", 8000);
+    } finally {
+      setTemplateUploadBusy(false);
+      event.target.value = "";
+    }
+  });
+}
+
+if (templateList) {
+  templateList.addEventListener("click", async (event) => {
+    const trigger = event.target.closest("[data-template-delete]");
+    if (!trigger) return;
+
+    const docId = trigger.getAttribute("data-template-delete") || "";
+    if (!docId) return;
+
+    try {
+      await deleteTemplateFile(docId);
+      await loadTemplateList();
+      showTemplateFeedback("模板已删除", "success", 2200);
+    } catch (err) {
+      showTemplateFeedback(`删除失败：${err.message}`, "error", 8000);
+    }
+  });
+}
 
 document.getElementById("refreshStatusBtn").addEventListener("click", checkSystemStatus);
 

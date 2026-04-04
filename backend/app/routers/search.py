@@ -98,6 +98,95 @@ def _extract_upload_text(file_name: str, raw: bytes) -> str:
     )
 
 
+def _build_document_list_items(
+    db: Session,
+    limit: int,
+    *,
+    source_prefix: str | None = None,
+    exclude_prefix: str | None = None,
+) -> list[DocumentListItem]:
+    query = (
+        db.query(
+            DocumentTable.doc_id,
+            DocumentTable.file_name,
+            DocumentTable.version_id,
+            DocumentTable.total_lines,
+            DocumentTable.created_at,
+            DocumentTable.updated_at,
+            func.count(ParagraphTable.para_id).label("paragraphs_indexed"),
+        )
+        .outerjoin(ParagraphTable, ParagraphTable.doc_id == DocumentTable.doc_id)
+    )
+
+    if source_prefix:
+        query = query.filter(DocumentTable.source_path.like(f"{source_prefix}%"))
+    if exclude_prefix:
+        query = query.filter(DocumentTable.source_path.notlike(f"{exclude_prefix}%"))
+
+    rows = (
+        query.group_by(
+            DocumentTable.doc_id,
+            DocumentTable.file_name,
+            DocumentTable.version_id,
+            DocumentTable.total_lines,
+            DocumentTable.created_at,
+            DocumentTable.updated_at,
+        )
+        .order_by(DocumentTable.updated_at.desc(), DocumentTable.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        DocumentListItem(
+            doc_id=row.doc_id,
+            file_name=row.file_name,
+            version_id=row.version_id,
+            total_lines=row.total_lines,
+            paragraphs_indexed=int(row.paragraphs_indexed or 0),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+        for row in rows
+    ]
+
+
+def _get_document_list_item(db: Session, doc_id: str) -> DocumentListItem | None:
+    row = (
+        db.query(
+            DocumentTable.doc_id,
+            DocumentTable.file_name,
+            DocumentTable.version_id,
+            DocumentTable.total_lines,
+            DocumentTable.created_at,
+            DocumentTable.updated_at,
+            func.count(ParagraphTable.para_id).label("paragraphs_indexed"),
+        )
+        .outerjoin(ParagraphTable, ParagraphTable.doc_id == DocumentTable.doc_id)
+        .filter(DocumentTable.doc_id == doc_id)
+        .group_by(
+            DocumentTable.doc_id,
+            DocumentTable.file_name,
+            DocumentTable.version_id,
+            DocumentTable.total_lines,
+            DocumentTable.created_at,
+            DocumentTable.updated_at,
+        )
+        .first()
+    )
+    if not row:
+        return None
+    return DocumentListItem(
+        doc_id=row.doc_id,
+        file_name=row.file_name,
+        version_id=row.version_id,
+        total_lines=row.total_lines,
+        paragraphs_indexed=int(row.paragraphs_indexed or 0),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 5.1 Similarity search endpoint
 # ---------------------------------------------------------------------------
@@ -257,42 +346,77 @@ async def list_documents(
 ):
     """List uploaded documents persisted in PostgreSQL."""
     limit = max(1, min(limit, 500))
-    rows = (
-        db.query(
-            DocumentTable.doc_id,
-            DocumentTable.file_name,
-            DocumentTable.version_id,
-            DocumentTable.total_lines,
-            DocumentTable.created_at,
-            DocumentTable.updated_at,
-            func.count(ParagraphTable.para_id).label("paragraphs_indexed"),
-        )
-        .outerjoin(ParagraphTable, ParagraphTable.doc_id == DocumentTable.doc_id)
-        .group_by(
-            DocumentTable.doc_id,
-            DocumentTable.file_name,
-            DocumentTable.version_id,
-            DocumentTable.total_lines,
-            DocumentTable.created_at,
-            DocumentTable.updated_at,
-        )
-        .order_by(DocumentTable.updated_at.desc(), DocumentTable.created_at.desc())
-        .limit(limit)
-        .all()
+    return _build_document_list_items(
+        db=db,
+        limit=limit,
+        source_prefix=None,
+        exclude_prefix="template://",
     )
 
-    return [
-        DocumentListItem(
-            doc_id=row.doc_id,
-            file_name=row.file_name,
-            version_id=row.version_id,
-            total_lines=row.total_lines,
-            paragraphs_indexed=int(row.paragraphs_indexed or 0),
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-        )
-        for row in rows
-    ]
+
+@router.post(
+    "/templates/upload",
+    response_model=DocumentListItem,
+)
+async def upload_template(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_session),
+):
+    """Upload and persist a standard contract template."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    raw = await file.read()
+    content = _extract_upload_text(file.filename, raw)
+    result = ingest_document(
+        db=db,
+        content=content,
+        file_name=file.filename,
+        source_path=f"template://{file.filename}",
+    )
+    item = _get_document_list_item(db, result.doc_id)
+    if not item:
+        raise HTTPException(status_code=500, detail="Template upload succeeded but listing record is missing")
+    return item
+
+
+@router.get(
+    "/templates",
+    response_model=list[DocumentListItem],
+)
+async def list_templates(
+    limit: int = 100,
+    db: Session = Depends(get_session),
+):
+    """List persisted standard contract templates."""
+    limit = max(1, min(limit, 500))
+    return _build_document_list_items(
+        db=db,
+        limit=limit,
+        source_prefix="template://",
+        exclude_prefix=None,
+    )
+
+
+@router.delete("/templates/{doc_id}")
+async def delete_template_endpoint(
+    doc_id: str,
+    db: Session = Depends(get_session),
+):
+    """Delete a persisted standard template."""
+    template_doc = (
+        db.query(DocumentTable.doc_id)
+        .filter(DocumentTable.doc_id == doc_id)
+        .filter(DocumentTable.source_path.like("template://%"))
+        .first()
+    )
+    if not template_doc:
+        raise HTTPException(status_code=404, detail=f"Template {doc_id} not found")
+
+    success = delete_document(db, doc_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Template {doc_id} not found")
+    return {"status": "deleted", "doc_id": doc_id}
 
 
 @router.delete("/documents/{doc_id}")
