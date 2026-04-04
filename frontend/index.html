@@ -131,30 +131,102 @@
             </section>
 
             <footer class="composer-wrap" id="composerWrap">
-              <div class="tool-row">
-                <button type="button" class="tool-btn">@</button>
-                <button type="button" class="tool-btn">快速</button>
-                <button type="button" class="tool-btn">帮我写作</button>
-                <button type="button" class="tool-btn">图像生成</button>
-                <button type="button" class="tool-btn">更多</button>
-              </div>
-
               <form class="composer" id="composer">
                 <input id="input" type="text" placeholder="发消息..." autocomplete="off" />
-                <button type="submit" aria-label="发送">发送</button>
+                <div class="composer-actions">
+                  <div class="composer-actions-left">
+                    <button
+                      class="composer-action composer-action-icon"
+                      id="reviewUploadBtn"
+                      type="button"
+                      aria-label="上传待审合同"
+                      title="上传待审合同"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M8.5 12.5 14.86 6.14a3.5 3.5 0 1 1 4.95 4.95l-8.48 8.49a5 5 0 1 1-7.07-7.07l8.84-8.84"
+                        ></path>
+                      </svg>
+                    </button>
+                    <span class="composer-action-divider" aria-hidden="true"></span>
+                    <button
+                      class="composer-action contract-review-toggle"
+                      id="contractReviewModeToggle"
+                      type="button"
+                      aria-pressed="false"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M8 7.5h8"></path>
+                        <path d="M8 12h8"></path>
+                        <path d="M8 16.5h5"></path>
+                        <path d="M6 4.5h12a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 18 19.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5Z"></path>
+                      </svg>
+                      <span>合同审查</span>
+                    </button>
+                  </div>
+
+                  <button class="composer-submit" type="submit" aria-label="发送">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 5v14"></path>
+                      <path d="m7 10 5-5 5 5"></path>
+                    </svg>
+                  </button>
+                </div>
               </form>
+              <input id="chatAttachmentInput" type="file" multiple accept=".txt,.md,.pdf,.docx,.doc" hidden />
+              <input id="reviewContractInput" type="file" multiple accept=".txt,.md,.pdf,.docx,.doc" hidden />
+              <div class="composer-attachment-tray hidden" id="chatAttachmentTray" aria-label="聊天附件列表"></div>
             </footer>
           </section>
 
-          <aside class="citation-sidebar hidden" id="citationSidebar" aria-label="引用案例侧栏">
+          <aside class="citation-sidebar hidden" id="citationSidebar" aria-label="聊天右侧栏">
             <div class="citation-sidebar-resize" id="citationSidebarResize" aria-hidden="true"></div>
             <div class="citation-sidebar-head">
-              <h3 id="citationSidebarTitle">引用案例</h3>
-              <button class="citation-sidebar-close" id="citationSidebarClose" type="button" aria-label="关闭引用案例">×</button>
+              <div class="right-sidebar-tabs" role="tablist" aria-label="右侧栏标签页">
+                <button
+                  class="right-sidebar-tab active"
+                  id="rightSidebarTabAttachments"
+                  data-right-sidebar-tab="attachments"
+                  role="tab"
+                  aria-selected="true"
+                  type="button"
+                >
+                  附件
+                </button>
+                <button
+                  class="right-sidebar-tab"
+                  id="rightSidebarTabCitations"
+                  data-right-sidebar-tab="citations"
+                  role="tab"
+                  aria-selected="false"
+                  type="button"
+                >
+                  引用来源
+                </button>
+              </div>
+              <button class="citation-sidebar-close" id="citationSidebarClose" type="button" aria-label="关闭右侧栏">×</button>
             </div>
-            <div class="citation-sidebar-body" id="citationSidebarBody">
-              <p class="panel-text">点击聊天中的“引用来源”后，这里会显示对应案例。</p>
-            </div>
+
+            <section class="right-sidebar-panel" id="rightSidebarAttachmentsPanel" role="tabpanel" aria-labelledby="rightSidebarTabAttachments">
+              <div class="citation-sidebar-body">
+                <h3 class="right-sidebar-title">附件</h3>
+                <div class="right-sidebar-empty" id="rightSidebarAttachmentsBody">上传文件后，这里会显示当前会话附件。</div>
+              </div>
+            </section>
+
+            <section
+              class="right-sidebar-panel hidden"
+              id="rightSidebarCitationsPanel"
+              role="tabpanel"
+              aria-labelledby="rightSidebarTabCitations"
+            >
+              <div class="citation-sidebar-body">
+                <h3 class="right-sidebar-title" id="citationSidebarTitle">引用来源</h3>
+                <div id="citationSidebarBody">
+                  <p class="panel-text">点击聊天中的“引用来源”后，这里会显示对应案例。</p>
+                </div>
+              </div>
+            </section>
           </aside>
         </div>
       </main>

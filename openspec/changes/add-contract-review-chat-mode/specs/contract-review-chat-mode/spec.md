@@ -36,12 +36,12 @@ The system SHALL recommend a standard template for each uploaded review-target c
 - **WHEN** the user selects a different standard template before starting review
 - **THEN** the system uses the user-selected template instead of the recommendation
 
-### Requirement: Review Requests Depend on Uploaded Contracts
-The system SHALL require at least one uploaded review-target contract before executing a contract review request from the main chat composer.
+### Requirement: Review Requests Handle Missing Uploaded Contracts Explicitly
+The system SHALL accept a contract review request even when no uploaded review-target contract is present and SHALL return a clear no-contract-review result instead of silently proceeding.
 
-#### Scenario: Review request without uploaded file is blocked
+#### Scenario: Review request without uploaded file returns explicit empty result
 - **WHEN** the user submits a contract review request without any uploaded review-target contract
-- **THEN** the system refuses to start review and instructs the user to upload a contract first
+- **THEN** the system returns a clear response that there is currently no contract available for review
 
 ### Requirement: Template-Difference Review Output
 The system SHALL generate contract review output by comparing each uploaded review-target contract with a selected standard template and SHALL focus the first version of review results on template differences.
@@ -56,4 +56,3 @@ The system SHALL support multiple uploaded review-target contracts in one reques
 #### Scenario: Multiple uploaded files are reviewed in order
 - **WHEN** the user submits a contract review request with multiple uploaded files
 - **THEN** the system streams review output for those files serially instead of interleaving the content
-

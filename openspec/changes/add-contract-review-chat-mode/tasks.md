@@ -1,10 +1,10 @@
 ## 1. Frontend Chat Mode Integration
 
-- [ ] 1.1 Remove the existing helper text above the composer without changing unrelated chat layout
-- [ ] 1.2 Add a contract review mode toggle below the composer and persist its state per chat session
-- [ ] 1.3 Add a left-side upload button to the composer for review-target contract files
+- [x] 1.1 Remove the existing helper text above the composer without changing unrelated chat layout
+- [x] 1.2 Add a contract review mode toggle below the composer and persist its state per chat session
+- [x] 1.3 Add a left-side upload button to the composer for review-target contract files
 - [ ] 1.4 Add temporary review file state, recommended template state, and selected template state to the frontend session model
-- [ ] 1.5 Block contract review submission when no review-target contract file has been uploaded
+- [ ] 1.5 Allow contract review submission without uploaded contracts and return an explicit no-contract-review result
 
 ## 2. Template Library Panel
 
@@ -27,4 +27,4 @@
 - [ ] 4.2 Verify temporary review-target contracts never appear in persistent document or template listings
 - [ ] 4.3 Verify users can override the recommended template before starting review
 - [ ] 4.4 Verify session reset or replacement clears temporary review-target contracts
-- [ ] 4.5 Validate multi-file contract review, parsing failure handling, and serial streaming output
+- [ ] 4.5 Validate no-contract handling, multi-file contract review, parsing failure handling, and serial streaming output

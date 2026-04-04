@@ -91,3 +91,15 @@ python scripts/hook_checks.py pre-push
 - `backend/.env` 不纳入版本控制。
 - `backend/data/models_cache/`、日志文件、解释器缓存属于本地运行产物。
 - 当前前端依赖后端 `http://localhost:8000/api`。
+
+## Recent Updates (2026-04)
+
+- Chat composer now supports a shared upload entry that routes by mode:
+  - `chat` mode uploads session attachments for normal conversation.
+  - `contract-review` mode uploads review-target contracts.
+- The right sidebar is now tabbed (`Attachments` / `Citations`) and remains hidden by default.
+  - It opens when attachments are uploaded or when citation sources are clicked.
+  - Users can close the sidebar manually at any time.
+- Contract review behavior is updated in OpenSpec:
+  - Review requests are allowed even without uploaded contracts.
+  - Backend should return an explicit "no contract available for review" result.

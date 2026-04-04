@@ -4,6 +4,7 @@ const ACTIVE_SESSION_KEY = "activeChatSessionIdV2";
 const MAX_SESSIONS = 30;
 const MAX_MESSAGES_PER_SESSION = 120;
 const SIDEBAR_BREAKPOINT = 900;
+const RIGHT_SIDEBAR_TABS = new Set(["attachments", "citations"]);
 
 const app = document.getElementById("app");
 const sidebarToggle = document.getElementById("sidebarToggle");
@@ -22,6 +23,12 @@ const composerWrap = document.getElementById("composerWrap");
 
 const composer = document.getElementById("composer");
 const input = document.getElementById("input");
+const reviewUploadBtn = document.getElementById("reviewUploadBtn");
+const chatAttachmentInput = document.getElementById("chatAttachmentInput");
+const reviewContractInput = document.getElementById("reviewContractInput");
+const chatAttachmentTray = document.getElementById("chatAttachmentTray");
+const rightSidebarAttachmentsBody = document.getElementById("rightSidebarAttachmentsBody");
+const contractReviewModeToggle = document.getElementById("contractReviewModeToggle");
 const historyList = document.getElementById("historyList");
 
 const menuFiles = document.getElementById("menuFiles");
@@ -33,9 +40,44 @@ const fileFeedback = document.getElementById("fileFeedback");
 const CITATION_SIDEBAR_MIN_WIDTH = 280;
 const CITATION_SIDEBAR_DEFAULT_WIDTH = 360;
 const CITATION_SIDEBAR_MAX_WIDTH = 720;
+const rightSidebarTabButtons = Array.from(document.querySelectorAll("[data-right-sidebar-tab]"));
+const rightSidebarAttachmentsPanel = document.getElementById("rightSidebarAttachmentsPanel");
+const rightSidebarCitationsPanel = document.getElementById("rightSidebarCitationsPanel");
 
 let chatSessions = loadSessions();
 let activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY) || null;
+let draftSessionMode = "chat";
+
+function normalizeChatAttachment(attachment) {
+  if (!attachment || typeof attachment !== "object") return null;
+
+  const id = typeof attachment.id === "string" && attachment.id.trim() ? attachment.id : null;
+  const fileName =
+    typeof attachment.fileName === "string" && attachment.fileName.trim()
+      ? attachment.fileName
+      : null;
+
+  if (!id || !fileName) return null;
+
+  return {
+    id,
+    fileName,
+    status: typeof attachment.status === "string" && attachment.status.trim() ? attachment.status : "ready",
+    size: Number.isFinite(attachment.size) ? attachment.size : null,
+    uploadedAt: Number.isFinite(attachment.uploadedAt) ? attachment.uploadedAt : Date.now(),
+  };
+}
+
+function normalizeRightSidebarTab(tab) {
+  return RIGHT_SIDEBAR_TABS.has(tab) ? tab : "attachments";
+}
+
+function formatAttachmentSize(size) {
+  if (!Number.isFinite(size) || size < 0) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function loadSessions() {
   try {
@@ -47,6 +89,11 @@ function loadSessions() {
         id: s.id,
         title: typeof s.title === "string" && s.title.trim() ? s.title : "新会话",
         updatedAt: Number.isFinite(s.updatedAt) ? s.updatedAt : Date.now(),
+        mode: s.mode === "contract-review" ? "contract-review" : "chat",
+        chatAttachments: Array.isArray(s.chatAttachments)
+          ? s.chatAttachments.map(normalizeChatAttachment).filter(Boolean)
+          : [],
+        rightSidebarTab: normalizeRightSidebarTab(s.rightSidebarTab),
         messages: s.messages
           .filter((m) => m && typeof m.type === "string")
           .slice(-MAX_MESSAGES_PER_SESSION),
@@ -86,6 +133,9 @@ function createSession(firstQuery = "") {
     id: `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     title: summarizeTitle(firstQuery),
     updatedAt: Date.now(),
+    mode: draftSessionMode,
+    chatAttachments: [],
+    rightSidebarTab: "attachments",
     messages: [],
   };
   chatSessions.unshift(session);
@@ -103,6 +153,157 @@ function ensureActiveSession(firstQuery = "") {
 function touchSession(session) {
   session.updatedAt = Date.now();
   persistSessions();
+}
+
+function getRightSidebarTab() {
+  return normalizeRightSidebarTab(getActiveSession()?.rightSidebarTab);
+}
+
+function syncRightSidebarAttachmentsSummary() {
+  if (!rightSidebarAttachmentsBody) return;
+  const session = getActiveSession();
+  const count = Array.isArray(session?.chatAttachments) ? session.chatAttachments.length : 0;
+  rightSidebarAttachmentsBody.textContent =
+    count > 0 ? `当前会话已上传 ${count} 个附件。` : "上传文件后，这里会显示当前会话附件。";
+}
+
+function syncRightSidebarTabUi() {
+  const tab = getRightSidebarTab();
+
+  rightSidebarTabButtons.forEach((button) => {
+    const active = button.dataset.rightSidebarTab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+
+  if (rightSidebarAttachmentsPanel) {
+    rightSidebarAttachmentsPanel.classList.toggle("hidden", tab !== "attachments");
+  }
+  if (rightSidebarCitationsPanel) {
+    rightSidebarCitationsPanel.classList.toggle("hidden", tab !== "citations");
+  }
+}
+
+function setRightSidebarTab(tab) {
+  const nextTab = normalizeRightSidebarTab(tab);
+  const session = getActiveSession();
+  if (session) {
+    session.rightSidebarTab = nextTab;
+    persistSessions();
+  }
+  syncRightSidebarAttachmentsSummary();
+  syncRightSidebarTabUi();
+}
+
+function openRightSidebar(tab) {
+  if (tab) {
+    setRightSidebarTab(tab);
+  } else {
+    syncRightSidebarAttachmentsSummary();
+    syncRightSidebarTabUi();
+  }
+  citationSidebar.classList.remove("hidden");
+  citationSidebar.classList.add("open");
+}
+
+function renderChatAttachments() {
+  if (!chatAttachmentTray) return;
+
+  const session = getActiveSession();
+  const attachments = Array.isArray(session?.chatAttachments) ? session.chatAttachments : [];
+  const isReviewMode = getComposerMode() === "contract-review";
+
+  if (isReviewMode || attachments.length === 0) {
+    chatAttachmentTray.innerHTML = "";
+    chatAttachmentTray.classList.add("hidden");
+    syncRightSidebarAttachmentsSummary();
+    return;
+  }
+
+  chatAttachmentTray.innerHTML = attachments
+    .map(
+      (attachment) => `
+        <div class="composer-attachment-chip" data-attachment-id="${escapeHtml(attachment.id)}">
+          <div class="composer-attachment-meta">
+            <span class="composer-attachment-name" title="${escapeHtml(attachment.fileName)}">${escapeHtml(attachment.fileName)}</span>
+            <span class="composer-attachment-size">${escapeHtml(formatAttachmentSize(attachment.size))}</span>
+          </div>
+          <button class="composer-attachment-remove" type="button" data-remove-attachment="${escapeHtml(attachment.id)}" aria-label="移除附件">×</button>
+        </div>
+      `
+    )
+    .join("");
+  chatAttachmentTray.classList.remove("hidden");
+  syncRightSidebarAttachmentsSummary();
+}
+
+function addChatAttachments(files) {
+  if (!Array.isArray(files) || files.length === 0) return;
+
+  const session = ensureActiveSession(input.value.trim());
+  const nextAttachments = files.map((file) => ({
+    id: `a_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    fileName: file.name,
+    status: "ready",
+    size: file.size,
+    uploadedAt: Date.now(),
+  }));
+
+  session.chatAttachments = [...session.chatAttachments, ...nextAttachments];
+  touchSession(session);
+  renderHistory();
+  renderChatAttachments();
+  showChat();
+  openRightSidebar("attachments");
+}
+
+function removeChatAttachment(attachmentId) {
+  const session = getActiveSession();
+  if (!session || !Array.isArray(session.chatAttachments)) return;
+
+  const target = session.chatAttachments.find((attachment) => attachment.id === attachmentId);
+  if (!target) return;
+
+  session.chatAttachments = session.chatAttachments.filter((attachment) => attachment.id !== attachmentId);
+  touchSession(session);
+  renderChatAttachments();
+
+  if (session.chatAttachments.length === 0 && getRightSidebarTab() === "attachments") {
+    closeCitationSidebar();
+  }
+}
+
+function getComposerMode() {
+  return getActiveSession()?.mode || draftSessionMode;
+}
+
+function syncComposerModeUi() {
+  const isReviewMode = getComposerMode() === "contract-review";
+  contractReviewModeToggle.classList.toggle("active", isReviewMode);
+  contractReviewModeToggle.setAttribute("aria-pressed", String(isReviewMode));
+  reviewUploadBtn.disabled = false;
+  reviewUploadBtn.setAttribute("aria-disabled", "false");
+  reviewUploadBtn.title = isReviewMode ? "上传待审合同" : "上传聊天附件";
+  reviewUploadBtn.setAttribute("aria-label", isReviewMode ? "上传待审合同" : "上传聊天附件");
+  chatAttachmentInput.disabled = isReviewMode;
+  reviewContractInput.disabled = !isReviewMode;
+  input.placeholder = isReviewMode ? "输入审查要求..." : "发消息...";
+  renderChatAttachments();
+}
+
+function setComposerMode(mode) {
+  const nextMode = mode === "contract-review" ? "contract-review" : "chat";
+  const session = getActiveSession();
+
+  if (session) {
+    session.mode = nextMode;
+    touchSession(session);
+    renderHistory();
+  } else {
+    draftSessionMode = nextMode;
+  }
+
+  syncComposerModeUi();
 }
 
 function setMenuActive(target) {
@@ -163,6 +364,9 @@ function restoreConversationView() {
   } else {
     showWelcome();
   }
+  syncComposerModeUi();
+  syncRightSidebarAttachmentsSummary();
+  syncRightSidebarTabUi();
 }
 
 let fileFeedbackTimer = null;
@@ -281,10 +485,10 @@ function closeCitationSidebar() {
 }
 
 function openCitationSidebar(citations) {
+  setRightSidebarTab("citations");
   citationSidebarTitle.textContent = `引用案例（${citations.length}）`;
   citationSidebarBody.innerHTML = buildCitationListHtml(citations);
-  citationSidebar.classList.remove("hidden");
-  citationSidebar.classList.add("open");
+  openRightSidebar();
 }
 
 function buildAssistantHtml(answer, citations) {
@@ -438,6 +642,7 @@ function renderHistory() {
       renderHistory();
       renderSessionMessages(session);
       showChat();
+      syncComposerModeUi();
       input.focus();
     });
 
@@ -701,6 +906,9 @@ if (activeSession && activeSession.messages.length > 0) {
 } else {
   showWelcome();
 }
+syncComposerModeUi();
+syncRightSidebarAttachmentsSummary();
+syncRightSidebarTabUi();
 
 composer.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -719,16 +927,56 @@ document.querySelectorAll(".suggestions button").forEach((btn) => {
 
 document.getElementById("newChatBtn").addEventListener("click", () => {
   activeSessionId = null;
+  draftSessionMode = "chat";
   persistSessions();
   chat.innerHTML = "";
   renderHistory();
   showWelcome();
+  syncComposerModeUi();
   input.focus();
+});
+
+rightSidebarTabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setRightSidebarTab(button.dataset.rightSidebarTab || "attachments");
+  });
 });
 
 menuFiles.addEventListener("click", () => showPanel("files"));
 menuContractReview.addEventListener("click", () => showPanel("contract-review"));
 menuStatus.addEventListener("click", () => showPanel("status"));
+
+contractReviewModeToggle.addEventListener("click", () => {
+  setComposerMode(getComposerMode() === "contract-review" ? "chat" : "contract-review");
+});
+
+reviewUploadBtn.addEventListener("click", () => {
+  const targetInput = getComposerMode() === "contract-review" ? reviewContractInput : chatAttachmentInput;
+  if (targetInput.disabled) return;
+  targetInput.click();
+});
+
+chatAttachmentInput.addEventListener("change", (event) => {
+  if (event.target instanceof HTMLInputElement) {
+    const files = Array.from(event.target.files || []);
+    if (files.length > 0) {
+      addChatAttachments(files);
+    }
+    event.target.value = "";
+  }
+});
+
+reviewContractInput.addEventListener("change", (event) => {
+  if (event.target instanceof HTMLInputElement) {
+    event.target.value = "";
+  }
+});
+
+chatAttachmentTray.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-remove-attachment]");
+  if (!target) return;
+  removeChatAttachment(target.getAttribute("data-remove-attachment") || "");
+});
 
 chat.addEventListener("click", (event) => {
   const trigger = event.target.closest(".citation-trigger");
