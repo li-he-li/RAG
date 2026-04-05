@@ -115,3 +115,4 @@ python scripts/hook_checks.py pre-push
 - Review generation starts only after the user clicks a template option, then streams through `POST /contract-review/stream`.
 - The attachment tray now sits above the composer and shows removable session files across normal chat and contract-review mode.
 - Session temp uploads use `/session-files/upload`, `/session-files`, and `/session-files/{file_id}` and stay outside the persistent template/document library.
+- In normal chat mode, session `chat_attachment` files can now drive similar-case retrieval and are also passed into answer generation context for case-to-case similarity reasoning.

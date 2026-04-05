@@ -108,6 +108,14 @@ class SearchResponse(BaseModel):
 class ChatRequest(BaseModel):
     """Request body for grounded DeepSeek chat over indexed legal evidence."""
     query: str = Field(..., min_length=1, description="User query text")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Optional chat session identifier for resolving session-scoped attachments",
+    )
+    use_chat_attachment: bool = Field(
+        default=False,
+        description="Whether retrieval should try to use session chat attachments as extra input",
+    )
     top_k_documents: int = Field(
         default=3,
         ge=1,
@@ -155,6 +163,14 @@ class ChatResponse(BaseModel):
     used_documents: int = Field(
         default=0,
         description="Number of unique documents used in grounding context",
+    )
+    attachment_used: bool = Field(
+        default=False,
+        description="True when retrieval used a session chat attachment as input",
+    )
+    attachment_file_name: Optional[str] = Field(
+        default=None,
+        description="Attachment filename used for retrieval input when available",
     )
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

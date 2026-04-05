@@ -75,6 +75,12 @@ function normalizeChatAttachment(attachment) {
     status: typeof attachment.status === "string" && attachment.status.trim() ? attachment.status : "ready",
     size: Number.isFinite(attachment.size) ? attachment.size : null,
     uploadedAt: Number.isFinite(attachment.uploadedAt) ? attachment.uploadedAt : Date.now(),
+    chatTempFileId:
+      typeof attachment.chatTempFileId === "string" && attachment.chatTempFileId.trim()
+        ? attachment.chatTempFileId
+        : typeof attachment.chat_file_id === "string" && attachment.chat_file_id.trim()
+          ? attachment.chat_file_id
+          : null,
     promotedReviewFileId:
       typeof attachment.promotedReviewFileId === "string" && attachment.promotedReviewFileId.trim()
         ? attachment.promotedReviewFileId
@@ -702,37 +708,76 @@ function renderChatAttachments() {
   renderRightSidebarAttachments();
 }
 
-function addChatAttachments(files) {
+async function addChatAttachments(files) {
   if (!Array.isArray(files) || files.length === 0) return;
 
   const session = ensureActiveSession(input.value.trim());
-  const nextAttachments = files.map((file) => ({
-    id: `a_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    fileName: file.name,
-    status: "ready",
-    size: file.size,
-    uploadedAt: Date.now(),
-  }));
-
-  rememberChatAttachmentFiles(session.id, nextAttachments, files);
-  session.chatAttachments = [...session.chatAttachments, ...nextAttachments];
-  touchSession(session);
+  activeSessionId = session.id;
+  persistSessions();
   renderHistory();
-  renderChatAttachments();
   showChat();
-  openRightSidebar("attachments");
+
+  const nextAttachments = [];
+  const successfulFiles = [];
+  const errors = [];
+
+  for (const file of files) {
+    try {
+      const result = await uploadSessionTempFile(session.id, "chat_attachment", file);
+      const normalized = normalizeReviewTempFile(result);
+      nextAttachments.push({
+        id: `a_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        fileName: file.name,
+        status: "ready",
+        size: file.size,
+        uploadedAt: Date.now(),
+        chatTempFileId: normalized?.id || null,
+      });
+      successfulFiles.push(file);
+    } catch (err) {
+      errors.push(`${file.name}：${err.message}`);
+    }
+  }
+
+  if (nextAttachments.length > 0) {
+    rememberChatAttachmentFiles(session.id, nextAttachments, successfulFiles);
+    session.chatAttachments = [...session.chatAttachments, ...nextAttachments];
+    touchSession(session);
+    renderHistory();
+    renderChatAttachments();
+    openRightSidebar("attachments");
+  }
+
+  if (errors.length > 0) {
+    appendErrorMessage(`聊天附件上传失败：\n${errors.join("\n")}`);
+  }
 }
 
 function addReviewTempFiles(files) {
   return uploadReviewTempFiles(files);
 }
 
-function removeChatAttachment(attachmentId) {
+async function removeChatAttachment(attachmentId) {
   const session = getActiveSession();
   if (!session || !Array.isArray(session.chatAttachments)) return;
 
   const target = session.chatAttachments.find((attachment) => attachment.id === attachmentId);
   if (!target) return;
+
+  if (target.chatTempFileId) {
+    try {
+      await deleteSessionTempFile(target.chatTempFileId);
+    } catch (err) {
+      const rawMessage = String(err?.message || err || "");
+      const message = rawMessage.toLowerCase();
+      const statusCode = Number.isFinite(err?.status) ? err.status : null;
+      const missing = statusCode === 404 || message.includes("not found") || message.includes("(404)");
+      if (!missing) {
+        appendErrorMessage(`移除聊天附件失败：${rawMessage}`);
+        return;
+      }
+    }
+  }
 
   session.chatAttachments = session.chatAttachments.filter((attachment) => attachment.id !== attachmentId);
   forgetChatAttachmentFile(session.id, attachmentId);
@@ -780,7 +825,7 @@ async function removeReviewTempFile(fileId) {
 async function removeSessionFile(options = {}) {
   const { attachmentId = "", reviewFileId = "" } = options;
   const reviewPromise = reviewFileId ? removeReviewTempFile(reviewFileId) : Promise.resolve();
-  const attachmentPromise = attachmentId ? Promise.resolve(removeChatAttachment(attachmentId)) : Promise.resolve();
+  const attachmentPromise = attachmentId ? removeChatAttachment(attachmentId) : Promise.resolve();
   await reviewPromise;
   await attachmentPromise;
 }
@@ -1038,8 +1083,13 @@ function openCitationSidebar(citations) {
   openRightSidebar();
 }
 
-function buildAssistantHtml(answer, citations) {
-  return `<div class="answer-title">助手回答</div><p>${nl2br(answer || "已收到你的消息。")}</p>${buildCitationHtml(citations)}`;
+function buildAssistantHtml(answer, citations, options = {}) {
+  const { attachmentUsed = false, attachmentFileName = "" } = options;
+  const notice =
+    attachmentUsed && attachmentFileName
+      ? `<div class="answer-source-notice">已基于附件《${escapeHtml(attachmentFileName)}》进行检索</div>`
+      : "";
+  return `<div class="answer-title">助手回答</div>${notice}<p>${nl2br(answer || "已收到你的消息。")}</p>${buildCitationHtml(citations)}`;
 }
 
 function appendMessage(role, html, shouldScroll = true) {
@@ -1099,7 +1149,15 @@ function normalizeChatResponse(response) {
     : [];
 
   const answer = response.answer || "已收到你的消息。";
-  return { answer, citations };
+  return {
+    answer,
+    citations,
+    attachmentUsed: Boolean(response.attachment_used),
+    attachmentFileName:
+      typeof response.attachment_file_name === "string" && response.attachment_file_name.trim()
+        ? response.attachment_file_name.trim()
+        : "",
+  };
 }
 
 function createStreamingAssistantMessage() {
@@ -1112,19 +1170,19 @@ function createStreamingAssistantMessage() {
       body.innerHTML = nl2br(answer || "");
       chat.scrollTop = chat.scrollHeight;
     },
-    finalize(answer, citations) {
-      node.innerHTML = buildAssistantHtml(answer, citations);
+    finalize(answer, citations, attachmentUsed = false, attachmentFileName = "") {
+      node.innerHTML = buildAssistantHtml(answer, citations, { attachmentUsed, attachmentFileName });
       chat.scrollTop = chat.scrollHeight;
     },
   };
 }
 
 function appendChatResponse(response, save = true) {
-  const { answer, citations } = normalizeChatResponse(response);
-  appendMessage("", buildAssistantHtml(answer, citations));
+  const { answer, citations, attachmentUsed, attachmentFileName } = normalizeChatResponse(response);
+  appendMessage("", buildAssistantHtml(answer, citations, { attachmentUsed, attachmentFileName }));
 
   if (save) {
-    pushMessageToActive({ type: "assistant", answer, citations });
+    pushMessageToActive({ type: "assistant", answer, citations, attachmentUsed, attachmentFileName });
   }
 }
 
@@ -1332,7 +1390,14 @@ function renderSessionMessages(session) {
         appendMessage("", buildReviewTemplateMessageHtml(msg.answer || "", msg.templateMatch), false);
         return;
       }
-      appendMessage("", buildAssistantHtml(msg.answer || "", msg.citations || []), false);
+      appendMessage(
+        "",
+        buildAssistantHtml(msg.answer || "", msg.citations || [], {
+          attachmentUsed: Boolean(msg.attachmentUsed),
+          attachmentFileName: msg.attachmentFileName || "",
+        }),
+        false
+      );
       return;
     }
     appendMessage("error-msg", `<p>${nl2br(msg.text || "")}</p>`, false);
@@ -1387,9 +1452,9 @@ function renderHistory() {
     del.addEventListener("click", async (event) => {
       event.stopPropagation();
       try {
-        await clearSessionTempFiles(session.id, "review_target");
+        await clearSessionTempFiles(session.id);
       } catch (err) {
-        appendErrorMessage(`删除会话临时合同失败：${err.message}`);
+        appendErrorMessage(`删除会话临时文件失败：${err.message}`);
         return;
       }
 
@@ -1429,6 +1494,8 @@ async function executeSearch(query) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query,
+        session_id: session.id,
+        use_chat_attachment: true,
         top_k_documents: 3,
         top_k_paragraphs: 8,
       }),
@@ -1481,8 +1548,19 @@ async function executeSearch(query) {
         }
         const normalized = normalizeChatResponse(item);
         answerText = normalized.answer || answerText || "已收到你的消息。";
-        assistantStream.finalize(answerText, normalized.citations);
-        pushMessageToActive({ type: "assistant", answer: answerText, citations: normalized.citations });
+        assistantStream.finalize(
+          answerText,
+          normalized.citations,
+          normalized.attachmentUsed,
+          normalized.attachmentFileName
+        );
+        pushMessageToActive({
+          type: "assistant",
+          answer: answerText,
+          citations: normalized.citations,
+          attachmentUsed: normalized.attachmentUsed,
+          attachmentFileName: normalized.attachmentFileName,
+        });
         finalized = true;
         return;
       }
@@ -1926,11 +2004,11 @@ reviewUploadBtn.addEventListener("click", () => {
   targetInput.click();
 });
 
-chatAttachmentInput.addEventListener("change", (event) => {
+chatAttachmentInput.addEventListener("change", async (event) => {
   if (event.target instanceof HTMLInputElement) {
     const files = Array.from(event.target.files || []);
     if (files.length > 0) {
-      addChatAttachments(files);
+      await addChatAttachments(files);
     }
     event.target.value = "";
   }

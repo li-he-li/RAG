@@ -854,6 +854,18 @@ body.resizing-citation-sidebar {
   margin-bottom: 8px;
 }
 
+.answer-source-notice {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #d6e4ff;
+  background: #f3f7ff;
+  color: #35598a;
+  font-size: 12px;
+}
+
 .citation-list {
   margin-top: 10px;
   display: grid;
