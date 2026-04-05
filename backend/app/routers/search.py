@@ -20,6 +20,7 @@ from app.models.schemas import (
     BootstrapStatus,
     ChatRequest,
     ChatResponse,
+    ContractReviewRequest,
     DocumentIngestRequest,
     DocumentIngestResponse,
     DocumentListItem,
@@ -32,6 +33,7 @@ from app.models.schemas import (
     SearchResponse,
 )
 from app.services.indexer import ingest_document, delete_document
+from app.services.contract_review import stream_template_difference_review
 from app.services.session_files import session_temp_file_store
 from app.services.template_recommendation import recommend_templates_for_session
 from app.services.chat import execute_grounded_chat, stream_grounded_chat
@@ -474,6 +476,43 @@ async def get_contract_review_template_recommendation(
     except Exception as exc:
         logger.exception("Template recommendation failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/contract-review/stream",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request"},
+    },
+)
+async def contract_review_stream(
+    request: ContractReviewRequest,
+    db: Session = Depends(get_session),
+):
+    """Stream contract review output against the selected standard template."""
+    session_id = request.session_id.strip()
+    template_id = request.template_id.strip()
+    query = request.query.strip()
+
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    if not template_id:
+        raise HTTPException(status_code=400, detail="template_id is required")
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+
+    return StreamingResponse(
+        stream_template_difference_review(
+            session_id=session_id,
+            template_id=template_id,
+            query=query,
+            db=db,
+        ),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(

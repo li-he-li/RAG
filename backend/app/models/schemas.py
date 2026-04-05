@@ -280,6 +280,19 @@ class ReviewTemplateRecommendationResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Contract review request / response
+# ---------------------------------------------------------------------------
+
+
+class ContractReviewRequest(BaseModel):
+    """Request body for contract review against a selected standard template."""
+
+    session_id: str = Field(..., min_length=1, description="Owning chat session identifier")
+    template_id: str = Field(..., min_length=1, description="Selected standard template identifier")
+    query: str = Field(..., min_length=1, description="User review instruction")
+
+
+# ---------------------------------------------------------------------------
 # Error model
 # ---------------------------------------------------------------------------
 

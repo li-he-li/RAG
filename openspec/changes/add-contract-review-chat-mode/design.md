@@ -86,3 +86,75 @@
 ## Open Questions
 
 - None.
+
+## Template Recommendation Scoring
+
+The recommendation step uses an explainable hybrid score instead of a pure LLM guess.
+
+- Candidate scope: only templates uploaded into the left-side template library are considered.
+- Semantic similarity weight: `0.6`
+- Title and contract-type keyword overlap weight: `0.2`
+- Clause and section structure overlap weight: `0.2`
+
+For each review-target file, the backend computes those three scores against every template, averages the scores across uploaded review files in the current session, and ranks templates by the weighted total.
+
+The API returns:
+
+- one `recommended_template`
+- up to five `candidate_templates`
+- per-candidate `confidence`
+- per-candidate `reasons`
+- score breakdown fields: `semantic_score`, `title_score`, `structure_score`
+
+This keeps the recommendation explainable in the UI and lets the user override the selected template before review execution.
+
+## Template Difference Review Generation
+
+The first contract-review generation flow uses a two-stage pipeline:
+
+1. Programmatic difference localization
+2. LLM-based legal review writing
+
+The backend first compares the uploaded review-target contract against the selected template in a deterministic way:
+
+- normalize both texts with the same parser
+- segment them into clause-sized units
+- align review clauses with template clauses by heading cues plus semantic similarity
+- mark unmatched template clauses as possible missing clauses
+- mark unmatched review clauses as possible added-risk clauses
+- mark aligned pairs with weak similarity or changed key values as changed clauses
+
+The deterministic stage is used to find and structure differences, not to make the final legal judgment.
+
+The LLM stage then receives only the selected template, the review contract, and the structured difference candidates. It is responsible for:
+
+- deciding whether a detected difference represents a real legal risk
+- classifying the risk in natural language
+- writing concise review conclusions and modification suggestions
+
+The first version focuses on high-value contract dimensions:
+
+- amount / price
+- term / deadline
+- breach liability
+- termination conditions
+- dispute resolution
+- confidentiality
+- intellectual property
+- auto-renewal and unilateral termination
+- liability cap and disclaimer
+
+This design avoids two failure modes:
+
+- pure hard-coded review logic that is too brittle for varied legal drafting
+- pure free-form LLM review that is hard to control or explain
+
+For multi-file review streaming, the backend emits the files in upload order and keeps explicit file boundaries in the stream. The stream contains:
+
+- one `start` event for the whole review request
+- per-file `file_start`
+- per-file `delta` chunks
+- per-file `file_done`
+- one final `done` event with the aggregated answer text
+
+This keeps the main chat response linear while still allowing the frontend to identify which output belongs to which uploaded contract.
