@@ -3,7 +3,7 @@
 - [x] 1.1 Extend the frontend session model with ordinary chat attachment state and right-sidebar tab state
 - [x] 1.2 Route the shared composer upload button to ordinary chat attachments in ordinary mode and review-target uploads in contract review mode
 - [x] 1.3 Add frontend ordinary chat attachment upload, removal, and upload feedback interactions
-- [ ] 1.4 Add a shared session-temp file backend capability (upload/list/delete + session cleanup) for `chat_attachment` and `review_target`, and keep it outside the database, vector index, and template library
+- [x] 1.4 Add a shared session-temp file backend capability (upload/list/delete + session cleanup) for `chat_attachment` and `review_target`, and keep it outside the database, vector index, and template library
 - [ ] 1.5 Pass current-session ordinary chat attachments into the main chat request flow so assistant answers can read them
 
 ## 2. Right Sidebar Tabs

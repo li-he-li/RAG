@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import run_bootstrap, SERVER_HOST, SERVER_PORT
 from app.core.database import init_db
 from app.routers.search import router as search_router
+from app.services.session_files import session_temp_file_store
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    session_temp_file_store.clear_all()
     logger.info("Shutting down...")
 
 

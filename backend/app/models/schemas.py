@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -191,6 +192,91 @@ class DocumentListItem(BaseModel):
     paragraphs_indexed: int = Field(default=0, description="Indexed paragraph count")
     created_at: datetime = Field(..., description="Record creation time")
     updated_at: datetime = Field(..., description="Record update time")
+
+
+# ---------------------------------------------------------------------------
+# Session temp file models
+# ---------------------------------------------------------------------------
+
+
+class SessionTempFileKind(str, Enum):
+    CHAT_ATTACHMENT = "chat_attachment"
+    REVIEW_TARGET = "review_target"
+
+
+class SessionTempFileItem(BaseModel):
+    """A session-scoped temporary file stored outside persistent search assets."""
+
+    file_id: str = Field(..., description="Temporary file identifier")
+    session_id: str = Field(..., description="Owning chat session identifier")
+    kind: SessionTempFileKind = Field(..., description="Temporary file usage kind")
+    file_name: str = Field(..., description="Original uploaded file name")
+    size_bytes: int = Field(..., ge=0, description="Uploaded file size in bytes")
+    content_chars: int = Field(..., ge=0, description="Extracted text character count")
+    created_at: datetime = Field(..., description="Temporary file creation time")
+    updated_at: datetime = Field(..., description="Temporary file last update time")
+
+
+class SessionTempClearResponse(BaseModel):
+    """Response for clearing session-scoped temporary files."""
+
+    session_id: str = Field(..., description="Chat session identifier")
+    cleared: int = Field(..., ge=0, description="Number of temporary files removed")
+    kind: Optional[SessionTempFileKind] = Field(
+        default=None,
+        description="Optional usage kind filter applied during cleanup",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Contract review template recommendation
+# ---------------------------------------------------------------------------
+
+
+class ReviewTemplateCandidate(BaseModel):
+    """A template candidate ranked for the current review session."""
+
+    id: str = Field(..., description="Template document identifier")
+    name: str = Field(..., description="Template display name")
+    score: float = Field(..., ge=0.0, le=1.0, description="Weighted overall recommendation score")
+    confidence: str = Field(default="low", description="Relative confidence label for this candidate")
+    semantic_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Semantic similarity score between review file and template",
+    )
+    title_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Title and contract-type keyword overlap score",
+    )
+    structure_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Clause and section structure overlap score",
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="Human-readable recommendation reasons",
+    )
+
+
+class ReviewTemplateRecommendationResponse(BaseModel):
+    """Recommendation payload for review-target contracts in a session."""
+
+    session_id: str = Field(..., description="Owning chat session identifier")
+    review_file_count: int = Field(..., ge=0, description="Number of review-target files considered")
+    recommended_template: Optional[ReviewTemplateCandidate] = Field(
+        default=None,
+        description="Highest-ranked recommended template",
+    )
+    candidate_templates: list[ReviewTemplateCandidate] = Field(
+        default_factory=list,
+        description="Selectable ranked template candidates",
+    )
 
 
 # ---------------------------------------------------------------------------

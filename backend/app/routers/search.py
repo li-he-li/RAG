@@ -8,7 +8,7 @@ import io
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -24,10 +24,16 @@ from app.models.schemas import (
     DocumentIngestResponse,
     DocumentListItem,
     ErrorResponse,
+    ReviewTemplateRecommendationResponse,
+    SessionTempClearResponse,
+    SessionTempFileItem,
+    SessionTempFileKind,
     SearchRequest,
     SearchResponse,
 )
 from app.services.indexer import ingest_document, delete_document
+from app.services.session_files import session_temp_file_store
+from app.services.template_recommendation import recommend_templates_for_session
 from app.services.chat import execute_grounded_chat, stream_grounded_chat
 from app.services.retrieval import execute_search
 from app.services.traceability import validate_and_enrich_results, TraceabilityValidationError
@@ -378,6 +384,96 @@ async def upload_template(
     if not item:
         raise HTTPException(status_code=500, detail="Template upload succeeded but listing record is missing")
     return item
+
+
+@router.post(
+    "/session-files/upload",
+    response_model=SessionTempFileItem,
+)
+async def upload_session_file(
+    session_id: str = Form(...),
+    kind: SessionTempFileKind = Form(...),
+    file: UploadFile = File(...),
+):
+    """Upload a session-scoped temporary file without persisting it to search storage."""
+    session_id = session_id.strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    raw = await file.read()
+    content = _extract_upload_text(file.filename, raw)
+    return session_temp_file_store.add_file(
+        session_id=session_id,
+        kind=kind,
+        file_name=file.filename,
+        content=content,
+        size_bytes=len(raw),
+    )
+
+
+@router.get(
+    "/session-files",
+    response_model=list[SessionTempFileItem],
+)
+async def list_session_files(
+    session_id: str,
+    kind: SessionTempFileKind | None = None,
+):
+    """List temporary files for a specific session."""
+    session_id = session_id.strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    return session_temp_file_store.list_files(session_id=session_id, kind=kind)
+
+
+@router.delete(
+    "/session-files/{file_id}",
+    response_model=SessionTempFileItem,
+)
+async def delete_session_file(file_id: str):
+    """Delete a single temporary session file."""
+    deleted = session_temp_file_store.delete_file(file_id=file_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Temporary file {file_id} not found")
+    return deleted
+
+
+@router.delete(
+    "/session-files/session/{session_id}",
+    response_model=SessionTempClearResponse,
+)
+async def clear_session_files(
+    session_id: str,
+    kind: SessionTempFileKind | None = None,
+):
+    """Clear temporary files for a session, optionally filtered by kind."""
+    session_id = session_id.strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    cleared = session_temp_file_store.clear_session(session_id=session_id, kind=kind)
+    return SessionTempClearResponse(session_id=session_id, cleared=cleared, kind=kind)
+
+
+@router.get(
+    "/contract-review/template-recommendation",
+    response_model=ReviewTemplateRecommendationResponse,
+)
+async def get_contract_review_template_recommendation(
+    session_id: str,
+    db: Session = Depends(get_session),
+):
+    """Return ranked template recommendations for the current review session."""
+    session_id = session_id.strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    try:
+        return recommend_templates_for_session(session_id=session_id, db=db)
+    except Exception as exc:
+        logger.exception("Template recommendation failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get(
