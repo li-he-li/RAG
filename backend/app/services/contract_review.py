@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.orm import Session
 
-from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, resolve_torch_device
 from app.models.db_tables import DocumentTable
 from app.models.schemas import SessionTempFileKind
 from app.services.embedding import encode_texts
@@ -177,6 +177,32 @@ def _build_clause_embeddings(clauses: list[ClauseUnit]) -> list[list[float]]:
     return encode_texts(texts)
 
 
+def _build_semantic_similarity_matrix(
+    template_embeddings: list[list[float]],
+    review_embeddings: list[list[float]],
+) -> list[list[float]]:
+    if not template_embeddings or not review_embeddings:
+        return []
+    try:
+        import torch
+        import torch.nn.functional as F
+
+        device = resolve_torch_device()
+        template_tensor = torch.tensor(template_embeddings, dtype=torch.float32, device=device)
+        review_tensor = torch.tensor(review_embeddings, dtype=torch.float32, device=device)
+        template_tensor = F.normalize(template_tensor, p=2, dim=1)
+        review_tensor = F.normalize(review_tensor, p=2, dim=1)
+        matrix = torch.matmul(review_tensor, template_tensor.transpose(0, 1))
+        matrix = torch.clamp(matrix, min=0.0, max=1.0)
+        return matrix.detach().cpu().tolist()
+    except Exception:
+        logger.debug("Falling back to CPU cosine similarity matrix for contract review", exc_info=True)
+        return [
+            [_cosine_similarity(review_vector, template_vector) for template_vector in template_embeddings]
+            for review_vector in review_embeddings
+        ]
+
+
 def _build_missing_finding(template_clause: ClauseUnit) -> DifferenceFinding:
     severity = "high" if _contains_critical_keyword(template_clause.content) else "medium"
     return DifferenceFinding(
@@ -257,6 +283,7 @@ def _select_difference_findings(
 
     template_embeddings = _build_clause_embeddings(template_clauses)
     review_embeddings = _build_clause_embeddings(review_clauses)
+    semantic_matrix = _build_semantic_similarity_matrix(template_embeddings, review_embeddings)
 
     matched_template_indices: set[int] = set()
     findings: list[DifferenceFinding] = []
@@ -268,7 +295,7 @@ def _select_difference_findings(
         best_score = 0.0
 
         for template_idx, template_clause in enumerate(template_clauses):
-            semantic = _cosine_similarity(review_embeddings[review_idx], template_embeddings[template_idx])
+            semantic = semantic_matrix[review_idx][template_idx] if semantic_matrix else 0.0
             heading = _heading_overlap(review_clause.heading_tokens, template_clause.heading_tokens)
             overall = semantic * 0.75 + heading * 0.25
             if overall > best_score:

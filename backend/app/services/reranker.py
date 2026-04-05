@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from app.core.config import MODELS_CACHE_DIR, RERANKER_MODEL_NAME
+from app.core.config import MODELS_CACHE_DIR, RERANKER_MODEL_NAME, resolve_torch_device
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +40,16 @@ def _get_reranker():
 
         local_snapshot = _resolve_local_snapshot(RERANKER_MODEL_NAME)
         model_source = str(local_snapshot) if local_snapshot else RERANKER_MODEL_NAME
-        logger.info("Loading reranker model: %s", model_source)
+        device = resolve_torch_device()
+        logger.info("Loading reranker model: %s on %s", model_source, device)
         _reranker = FlagReranker(
             model_source,
             cache_dir=str(MODELS_CACHE_DIR),
-            use_fp16=True,
+            use_fp16=device.startswith("cuda"),
             local_files_only=bool(local_snapshot),
+            devices=device,
         )
-        logger.info("Reranker model loaded.")
+        logger.info("Reranker model loaded on %s.", device)
     return _reranker
 
 

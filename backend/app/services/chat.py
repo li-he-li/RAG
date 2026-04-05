@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -26,6 +27,89 @@ from app.services.session_files import session_temp_file_store
 from app.services.traceability import validate_and_enrich_results
 
 logger = logging.getLogger(__name__)
+
+MIN_CITATION_SCORE = 0.45
+_NON_RETRIEVAL_TEXT_RE = re.compile(r"[\s\W_]+", re.UNICODE)
+_NON_RETRIEVAL_QUERIES = {
+    "你好",
+    "您好",
+    "嗨",
+    "hello",
+    "hi",
+    "hey",
+    "早上好",
+    "中午好",
+    "下午好",
+    "晚上好",
+    "在吗",
+    "在嘛",
+    "谢谢",
+    "感谢",
+    "thanks",
+    "thankyou",
+    "你是谁",
+    "你能做什么",
+    "你会什么",
+}
+_NON_RETRIEVAL_PREFIXES = (
+    "你好",
+    "您好",
+    "谢谢",
+    "感谢",
+    "hello",
+    "hi",
+    "hey",
+)
+_RETRIEVAL_HINT_KEYWORDS = {
+    "案例",
+    "类案",
+    "检索",
+    "搜索",
+    "相似",
+    "判决",
+    "裁判",
+    "法院",
+    "法条",
+    "法律",
+    "合同",
+    "条款",
+    "违约",
+    "赔偿",
+    "争议",
+    "起诉",
+    "诉讼",
+    "证据",
+    "review",
+    "search",
+    "case",
+    "contract",
+    "law",
+    "legal",
+    "clause",
+    "damage",
+}
+
+
+def _normalize_plain_query(query: str) -> str:
+    compact = _NON_RETRIEVAL_TEXT_RE.sub("", (query or "").strip().lower())
+    return compact
+
+
+def _should_skip_retrieval(query: str) -> bool:
+    normalized = _normalize_plain_query(query)
+    if not normalized:
+        return True
+    if normalized in _NON_RETRIEVAL_QUERIES:
+        return True
+    if any(normalized.startswith(prefix) for prefix in _NON_RETRIEVAL_PREFIXES):
+        return True
+    if any(keyword in normalized for keyword in _RETRIEVAL_HINT_KEYWORDS):
+        return False
+    # Very short, non-task-like input is treated as chit-chat to avoid noisy citations.
+    if len(normalized) <= 8:
+        return True
+    return False
+
 
 @dataclass(slots=True)
 class ChatRetrievalInput:
@@ -84,6 +168,9 @@ def _collect_citations(
     db: Session,
 ) -> tuple[list[ChatCitation], ChatRetrievalInput]:
     """Retrieve and flatten citation evidence for a chat query."""
+    if _should_skip_retrieval(request.query):
+        return [], ChatRetrievalInput(query_text=request.query)
+
     retrieval_input = _build_attachment_query_input(request)
     try:
         parsed_query = understand_query(retrieval_input.query_text, request.dispute_focus)
@@ -138,7 +225,12 @@ def _collect_citations(
             )
 
     ranked.sort(key=lambda x: x[0], reverse=True)
-    return [item[1] for item in ranked[: request.top_k_paragraphs]], retrieval_input
+    filtered = [
+        citation
+        for score, citation in ranked
+        if score >= MIN_CITATION_SCORE and bool((citation.snippet or "").strip())
+    ]
+    return filtered[: request.top_k_paragraphs], retrieval_input
 
 
 def _build_context(citations: list[ChatCitation]) -> str:
@@ -191,7 +283,6 @@ def _build_deepseek_payload(
     if citations:
         evidence_context = _build_context(citations)
         if retrieval_input.attachment_used and retrieval_input.attachment_focus_summary:
-            attachment_focus_context = "\n\n".join(retrieval_input.attachment_focus_blocks or [])
             system_prompt = (
                 "你是法律类案检索对比助手。你需要同时参考用户上传的原案件材料和给定数据库证据回答。"
                 "不要忽略原案件内容，也不要编造事实。"
@@ -204,8 +295,6 @@ def _build_deepseek_payload(
                 f"{retrieval_input.attachment_overview_summary or retrieval_input.attachment_focus_summary}\n\n"
                 "用户上传案件的重点摘要：\n"
                 f"{retrieval_input.attachment_focus_summary}\n\n"
-                "用户上传案件的重点原文片段：\n"
-                f"{attachment_focus_context}\n\n"
                 "数据库检索到的候选证据如下：\n"
                 f"{evidence_context}\n\n"
                 "请基于原案件材料与候选证据进行回答，至少覆盖：\n"

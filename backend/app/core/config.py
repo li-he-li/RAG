@@ -56,6 +56,7 @@ PARA_COLLECTION = "legal_paragraphs"
 
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "google")  # "google" or "local"
 RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
+TORCH_DEVICE = os.getenv("TORCH_DEVICE", "auto").strip().lower()
 
 # Google Embedding config
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
@@ -91,6 +92,26 @@ def _as_bool(value: str, default: bool) -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def torch_cuda_available() -> bool:
+    """Return whether the current runtime can use CUDA."""
+    try:
+        import torch
+    except Exception:
+        return False
+    return bool(torch.cuda.is_available())
+
+
+def resolve_torch_device() -> str:
+    """Resolve the runtime device for local model inference."""
+    if TORCH_DEVICE not in {"auto", "cpu", "cuda", "cuda:0"}:
+        return "cuda:0" if torch_cuda_available() else "cpu"
+    if TORCH_DEVICE == "cpu":
+        return "cpu"
+    if TORCH_DEVICE in {"cuda", "cuda:0"}:
+        return "cuda:0" if torch_cuda_available() else "cpu"
+    return "cuda:0" if torch_cuda_available() else "cpu"
 
 
 _ROLLOUT_ALLOWED_STAGES = {"document_only", "dual_no_explain", "dual_full"}
@@ -349,12 +370,14 @@ def bootstrap_reranker_model() -> bool:
         from FlagEmbedding import FlagReranker
         local_snapshot = _resolve_local_model_snapshot(RERANKER_MODEL_NAME)
         model_source = str(local_snapshot) if local_snapshot else RERANKER_MODEL_NAME
-        logger.info("Loading reranker model '%s'...", model_source)
+        device = resolve_torch_device()
+        logger.info("Loading reranker model '%s' on %s...", model_source, device)
         reranker = FlagReranker(
             model_source,
             cache_dir=str(MODELS_CACHE_DIR),
-            use_fp16=True,
+            use_fp16=device.startswith("cuda"),
             local_files_only=bool(local_snapshot),
+            devices=device,
         )
         # Quick test
         _ = reranker.compute_score(["测试", "测试"])
