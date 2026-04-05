@@ -882,6 +882,54 @@ body.resizing-citation-sidebar {
   background: #e9edf2;
 }
 
+.review-match-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.review-match-option {
+  border: 1px solid #d9e3f1;
+  background: #f8fbff;
+  color: #233750;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-match-option:hover {
+  border-color: #a8c0e5;
+  background: #f2f7ff;
+}
+
+.review-match-option.selected {
+  border-color: #5d84bb;
+  background: #edf4ff;
+}
+
+.review-match-option-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.review-match-option-meta {
+  font-size: 12px;
+  color: #62758f;
+}
+
+.review-match-option-tag {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  background: #dfeafc;
+  color: #476b9a;
+}
+
 .citation-toggle-text {
   color: #6a7280;
 }
@@ -1110,7 +1158,7 @@ body.resizing-citation-sidebar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
+  margin-bottom: 10px;
 }
 
 .composer-attachment-chip {

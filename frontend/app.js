@@ -52,6 +52,11 @@ const rightSidebarCitationsPanel = document.getElementById("rightSidebarCitation
 let chatSessions = loadSessions();
 let activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY) || null;
 let draftSessionMode = "chat";
+const pendingAttachmentFilesBySession = new Map();
+const promotedChatAttachmentIdsBySession = new Map();
+const warnedMissingReviewFilesBySession = new Set();
+const reviewFileSyncPromisesBySession = new Map();
+const reviewSelectionLocksBySession = new Set();
 
 function normalizeChatAttachment(attachment) {
   if (!attachment || typeof attachment !== "object") return null;
@@ -70,6 +75,10 @@ function normalizeChatAttachment(attachment) {
     status: typeof attachment.status === "string" && attachment.status.trim() ? attachment.status : "ready",
     size: Number.isFinite(attachment.size) ? attachment.size : null,
     uploadedAt: Number.isFinite(attachment.uploadedAt) ? attachment.uploadedAt : Date.now(),
+    promotedReviewFileId:
+      typeof attachment.promotedReviewFileId === "string" && attachment.promotedReviewFileId.trim()
+        ? attachment.promotedReviewFileId
+        : null,
   };
 }
 
@@ -80,16 +89,37 @@ function normalizeRightSidebarTab(tab) {
 function normalizeReviewTempFile(file) {
   if (!file || typeof file !== "object") return null;
 
-  const id = typeof file.id === "string" && file.id.trim() ? file.id : null;
-  const fileName = typeof file.fileName === "string" && file.fileName.trim() ? file.fileName : null;
+  const id =
+    typeof file.id === "string" && file.id.trim()
+      ? file.id
+      : typeof file.file_id === "string" && file.file_id.trim()
+        ? file.file_id
+        : null;
+  const fileName =
+    typeof file.fileName === "string" && file.fileName.trim()
+      ? file.fileName
+      : typeof file.file_name === "string" && file.file_name.trim()
+        ? file.file_name
+        : null;
   if (!id || !fileName) return null;
+
+  const uploadedAtRaw =
+    file.uploadedAt ??
+    file.created_at ??
+    file.updated_at;
+  const uploadedAtValue =
+    typeof uploadedAtRaw === "number"
+      ? uploadedAtRaw
+      : typeof uploadedAtRaw === "string"
+        ? Date.parse(uploadedAtRaw)
+        : NaN;
 
   return {
     id,
     fileName,
     status: typeof file.status === "string" && file.status.trim() ? file.status : "ready",
-    size: Number.isFinite(file.size) ? file.size : null,
-    uploadedAt: Number.isFinite(file.uploadedAt) ? file.uploadedAt : Date.now(),
+    size: Number.isFinite(file.size) ? file.size : Number.isFinite(file.size_bytes) ? file.size_bytes : null,
+    uploadedAt: Number.isFinite(uploadedAtValue) ? uploadedAtValue : Date.now(),
   };
 }
 
@@ -103,6 +133,29 @@ function normalizeReviewTemplate(template) {
     id,
     name,
     score: Number.isFinite(template.score) ? template.score : null,
+    confidence:
+      typeof template.confidence === "string" && template.confidence.trim() ? template.confidence : "low",
+    semanticScore:
+      Number.isFinite(template.semanticScore)
+        ? template.semanticScore
+        : Number.isFinite(template.semantic_score)
+          ? template.semantic_score
+          : null,
+    titleScore:
+      Number.isFinite(template.titleScore)
+        ? template.titleScore
+        : Number.isFinite(template.title_score)
+          ? template.title_score
+          : null,
+    structureScore:
+      Number.isFinite(template.structureScore)
+        ? template.structureScore
+        : Number.isFinite(template.structure_score)
+          ? template.structure_score
+          : null,
+    reasons: Array.isArray(template.reasons)
+      ? template.reasons.filter((item) => typeof item === "string" && item.trim())
+      : [],
   };
 }
 
@@ -111,6 +164,341 @@ function formatAttachmentSize(size) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatScorePercent(score) {
+  if (!Number.isFinite(score)) return "--";
+  return `${Math.round(score * 100)}%`;
+}
+
+function formatConfidenceLabel(confidence) {
+  if (confidence === "high") return "高";
+  if (confidence === "medium") return "中";
+  return "低";
+}
+
+function clearReviewTemplateState(session) {
+  if (!session) return;
+  session.reviewRecommendedTemplate = null;
+  session.reviewTemplateCandidates = [];
+  session.reviewSelectedTemplateId = null;
+}
+
+function getSelectedReviewTemplate(session) {
+  if (!session) return null;
+
+  const candidates = Array.isArray(session.reviewTemplateCandidates) ? session.reviewTemplateCandidates : [];
+  const selectedTemplateId =
+    typeof session.reviewSelectedTemplateId === "string" && session.reviewSelectedTemplateId.trim()
+      ? session.reviewSelectedTemplateId
+      : session.reviewRecommendedTemplate?.id || null;
+
+  if (!selectedTemplateId) {
+    return normalizeReviewTemplate(session.reviewRecommendedTemplate);
+  }
+
+  return (
+    candidates.find((template) => template.id === selectedTemplateId) ||
+    normalizeReviewTemplate(session.reviewRecommendedTemplate)
+  );
+}
+
+function findLinkedReviewFileIdForAttachment(session, attachment) {
+  if (!session || !attachment) return null;
+  if (typeof attachment.promotedReviewFileId === "string" && attachment.promotedReviewFileId.trim()) {
+    return attachment.promotedReviewFileId;
+  }
+
+  const reviewFiles = Array.isArray(session.reviewTempFiles) ? session.reviewTempFiles : [];
+  const matches = reviewFiles.filter(
+    (file) => file.fileName === attachment.fileName && String(file.size ?? "") === String(attachment.size ?? "")
+  );
+  return matches.length === 1 ? matches[0].id : null;
+}
+
+function getVisibleSessionFiles(session) {
+  if (!session) return [];
+
+  const reviewFiles = Array.isArray(session.reviewTempFiles) ? session.reviewTempFiles : [];
+  const reviewFilesById = new Map(reviewFiles.map((file) => [file.id, file]));
+  const linkedReviewFileIds = new Set();
+  const items = [];
+
+  const chatAttachments = Array.isArray(session.chatAttachments) ? session.chatAttachments : [];
+  chatAttachments.forEach((attachment) => {
+    const linkedReviewFileId = findLinkedReviewFileIdForAttachment(session, attachment);
+    const linkedReviewFile = linkedReviewFileId ? reviewFilesById.get(linkedReviewFileId) : null;
+    if (linkedReviewFileId) {
+      linkedReviewFileIds.add(linkedReviewFileId);
+    }
+
+    items.push({
+      id: linkedReviewFile?.id || attachment.id,
+      fileName: linkedReviewFile?.fileName || attachment.fileName,
+      size: linkedReviewFile?.size ?? attachment.size,
+      attachmentId: attachment.id,
+      reviewFileId: linkedReviewFile?.id || null,
+    });
+  });
+
+  reviewFiles.forEach((file) => {
+    if (linkedReviewFileIds.has(file.id)) return;
+    items.push({
+      id: file.id,
+      fileName: file.fileName,
+      size: file.size,
+      attachmentId: null,
+      reviewFileId: file.id,
+    });
+  });
+
+  return items;
+}
+
+function buildReviewTemplateMatchSummary(session) {
+  const selectedTemplate = getSelectedReviewTemplate(session);
+  if (!selectedTemplate) {
+    return "当前无可用标准模板。请先在左侧标准模板库上传模板。";
+  }
+
+  const candidates = Array.isArray(session?.reviewTemplateCandidates)
+    ? session.reviewTemplateCandidates.map(normalizeReviewTemplate).filter(Boolean)
+    : [];
+  const reviewFileCount = Array.isArray(session?.reviewTempFiles) ? session.reviewTempFiles.length : 0;
+  const candidateSummary = candidates
+    .slice(0, 3)
+    .map((template, index) => `${index + 1}. ${template.name}（综合 ${formatScorePercent(template.score)}）`)
+    .join("\n");
+  const reasons = Array.isArray(selectedTemplate.reasons) ? selectedTemplate.reasons.slice(0, 3) : [];
+
+  return [
+    `已完成标准模板匹配，本次审查将使用《${selectedTemplate.name}》。`,
+    `待审文件 ${reviewFileCount} 份，匹配置信度 ${formatConfidenceLabel(selectedTemplate.confidence)}，综合得分 ${formatScorePercent(selectedTemplate.score)}。`,
+    reasons.length > 0 ? `匹配依据：${reasons.join("；")}` : "",
+    candidateSummary ? `候选模板：\n${candidateSummary}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildReviewTemplateMessageHtml(answer, templateMatch) {
+  const selectedTemplateId =
+    typeof templateMatch?.selectedTemplateId === "string" && templateMatch.selectedTemplateId.trim()
+      ? templateMatch.selectedTemplateId
+      : null;
+  const recommendedTemplateId =
+    typeof templateMatch?.recommendedTemplateId === "string" && templateMatch.recommendedTemplateId.trim()
+      ? templateMatch.recommendedTemplateId
+      : null;
+  const query =
+    typeof templateMatch?.query === "string" && templateMatch.query.trim()
+      ? templateMatch.query.trim()
+      : "";
+  const candidates = Array.isArray(templateMatch?.candidates)
+    ? templateMatch.candidates.map(normalizeReviewTemplate).filter(Boolean)
+    : [];
+
+  const actions =
+    query && candidates.length > 0
+      ? `
+        <div class="review-match-actions">
+          ${candidates
+            .map((template) => {
+              const isSelected = template.id === selectedTemplateId;
+              const isRecommended = template.id === recommendedTemplateId;
+              return `
+                <button
+                  class="review-match-option ${isSelected ? "selected" : ""}"
+                  type="button"
+                  data-review-template-select="${escapeHtml(template.id)}"
+                  data-review-query="${escapeHtml(encodeURIComponent(query))}"
+                >
+                  <span class="review-match-option-name">${escapeHtml(template.name)}</span>
+                  <span class="review-match-option-meta">综合 ${escapeHtml(formatScorePercent(template.score))}</span>
+                  ${isRecommended ? `<span class="review-match-option-tag">推荐</span>` : ""}
+                  ${isSelected ? `<span class="review-match-option-tag">当前</span>` : ""}
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `
+      : "";
+
+  return `<div class="answer-title">模板匹配</div><p>${nl2br(answer || "")}</p>${actions}`;
+}
+
+function removeLatestTemplateMatchMessage(session) {
+  if (!session || !Array.isArray(session.messages)) return;
+
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const message = session.messages[index];
+    if (message?.type !== "assistant" || !message.templateMatch) continue;
+    session.messages.splice(index, 1);
+    return;
+  }
+}
+
+function getPendingAttachmentFileStore(sessionId) {
+  if (!sessionId) return null;
+  let store = pendingAttachmentFilesBySession.get(sessionId);
+  if (!store) {
+    store = new Map();
+    pendingAttachmentFilesBySession.set(sessionId, store);
+  }
+  return store;
+}
+
+function getPromotedChatAttachmentIds(sessionId) {
+  if (!sessionId) return null;
+  let ids = promotedChatAttachmentIdsBySession.get(sessionId);
+  if (!ids) {
+    ids = new Set();
+    promotedChatAttachmentIdsBySession.set(sessionId, ids);
+  }
+  return ids;
+}
+
+function rememberChatAttachmentFiles(sessionId, attachments, files) {
+  if (!sessionId || !Array.isArray(attachments) || !Array.isArray(files) || attachments.length !== files.length) {
+    return;
+  }
+
+  const store = getPendingAttachmentFileStore(sessionId);
+  if (!store) return;
+
+  attachments.forEach((attachment, index) => {
+    const file = files[index];
+    if (attachment?.id && file instanceof File) {
+      store.set(attachment.id, file);
+    }
+  });
+}
+
+function forgetChatAttachmentFile(sessionId, attachmentId) {
+  if (!sessionId || !attachmentId) return;
+  pendingAttachmentFilesBySession.get(sessionId)?.delete(attachmentId);
+  promotedChatAttachmentIdsBySession.get(sessionId)?.delete(attachmentId);
+}
+
+function clearSessionAttachmentBridgeState(sessionId) {
+  if (!sessionId) return;
+  pendingAttachmentFilesBySession.delete(sessionId);
+  promotedChatAttachmentIdsBySession.delete(sessionId);
+  warnedMissingReviewFilesBySession.delete(sessionId);
+  reviewFileSyncPromisesBySession.delete(sessionId);
+}
+
+function collectChatAttachmentsForReviewSync(session) {
+  if (!session?.id) {
+    return { readyItems: [], missingFileNames: [] };
+  }
+
+  const attachments = Array.isArray(session.chatAttachments) ? session.chatAttachments : [];
+  const store = pendingAttachmentFilesBySession.get(session.id);
+  const promotedIds = getPromotedChatAttachmentIds(session.id);
+  const readyItems = [];
+  const missingFileNames = [];
+
+  attachments.forEach((attachment) => {
+    if (!attachment?.id || promotedIds?.has(attachment.id)) {
+      return;
+    }
+
+    const file = store?.get(attachment.id);
+    if (file instanceof File) {
+      readyItems.push({ attachmentId: attachment.id, file });
+      return;
+    }
+
+    missingFileNames.push(attachment.fileName || "未命名文件");
+  });
+
+  return { readyItems, missingFileNames };
+}
+
+function warnMissingReviewFiles(sessionId, fileNames) {
+  if (!sessionId || !Array.isArray(fileNames) || fileNames.length === 0) return;
+  if (warnedMissingReviewFilesBySession.has(sessionId)) return;
+
+  warnedMissingReviewFilesBySession.add(sessionId);
+  appendErrorMessage(
+    `以下文件是在聊天模式下选择的，但当前浏览器已无法再次读取原始内容；如果要用于合同审查，请重新上传：\n${fileNames.join("\n")}`
+  );
+}
+
+async function ensureReviewTempFiles(session, options = {}) {
+  const { reportMissing = false } = options;
+  if (!session?.id) return;
+
+  const existingTask = reviewFileSyncPromisesBySession.get(session.id);
+  if (existingTask) {
+    await existingTask;
+    return;
+  }
+
+  const task = (async () => {
+    const { readyItems, missingFileNames } = collectChatAttachmentsForReviewSync(session);
+
+    if (readyItems.length === 0) {
+      if (reportMissing) {
+        warnMissingReviewFiles(session.id, missingFileNames);
+      }
+      return;
+    }
+
+    const uploadedItems = [];
+    const uploadErrors = [];
+    const promotedIds = [];
+
+    for (const item of readyItems) {
+      try {
+        const result = await uploadSessionTempFile(session.id, "review_target", item.file);
+        const normalized = normalizeReviewTempFile(result);
+        if (normalized) {
+          uploadedItems.push(normalized);
+          promotedIds.push(item.attachmentId);
+          const linkedAttachment = session.chatAttachments.find((attachment) => attachment.id === item.attachmentId);
+          if (linkedAttachment) {
+            linkedAttachment.promotedReviewFileId = normalized.id;
+          }
+        }
+      } catch (err) {
+        uploadErrors.push(`${item.file.name}：${err.message}`);
+      }
+    }
+
+    if (promotedIds.length > 0) {
+      const promoted = getPromotedChatAttachmentIds(session.id);
+      promotedIds.forEach((attachmentId) => promoted?.add(attachmentId));
+    }
+
+    if (uploadedItems.length > 0) {
+      clearReviewTemplateState(session);
+      session.reviewTempFiles = [...session.reviewTempFiles, ...uploadedItems];
+      touchSession(session);
+      renderHistory();
+      renderChatAttachments();
+    }
+
+    if (uploadErrors.length > 0) {
+      appendErrorMessage(`待审合同上传失败：\n${uploadErrors.join("\n")}`);
+    }
+
+    if (reportMissing) {
+      warnMissingReviewFiles(session.id, missingFileNames);
+    }
+  })();
+
+  reviewFileSyncPromisesBySession.set(session.id, task);
+
+  try {
+    await task;
+  } finally {
+    if (reviewFileSyncPromisesBySession.get(session.id) === task) {
+      reviewFileSyncPromisesBySession.delete(session.id);
+    }
+  }
 }
 
 function loadSessions() {
@@ -131,10 +519,15 @@ function loadSessions() {
           ? s.reviewTempFiles.map(normalizeReviewTempFile).filter(Boolean)
           : [],
         reviewRecommendedTemplate: normalizeReviewTemplate(s.reviewRecommendedTemplate),
+        reviewTemplateCandidates: Array.isArray(s.reviewTemplateCandidates)
+          ? s.reviewTemplateCandidates.map(normalizeReviewTemplate).filter(Boolean)
+          : [],
         reviewSelectedTemplateId:
           typeof s.reviewSelectedTemplateId === "string" && s.reviewSelectedTemplateId.trim()
             ? s.reviewSelectedTemplateId
             : null,
+        lastReviewQuery:
+          typeof s.lastReviewQuery === "string" && s.lastReviewQuery.trim() ? s.lastReviewQuery : null,
         rightSidebarTab: normalizeRightSidebarTab(s.rightSidebarTab),
         messages: s.messages
           .filter((m) => m && typeof m.type === "string")
@@ -164,6 +557,10 @@ function getActiveSession() {
   return chatSessions.find((s) => s.id === activeSessionId) || null;
 }
 
+function getSessionById(sessionId) {
+  return chatSessions.find((session) => session.id === sessionId) || null;
+}
+
 function summarizeTitle(text) {
   const clean = String(text).replace(/\s+/g, " ").trim();
   if (!clean) return "新会话";
@@ -179,7 +576,9 @@ function createSession(firstQuery = "") {
     chatAttachments: [],
     reviewTempFiles: [],
     reviewRecommendedTemplate: null,
+    reviewTemplateCandidates: [],
     reviewSelectedTemplateId: null,
+    lastReviewQuery: null,
     rightSidebarTab: "attachments",
     messages: [],
   };
@@ -271,10 +670,7 @@ function renderChatAttachments() {
   if (!chatAttachmentTray) return;
 
   const session = getActiveSession();
-  const isReviewMode = getComposerMode() === "contract-review";
-  const chatAttachments = Array.isArray(session?.chatAttachments) ? session.chatAttachments : [];
-  const reviewTempFiles = Array.isArray(session?.reviewTempFiles) ? session.reviewTempFiles : [];
-  const visibleItems = isReviewMode ? reviewTempFiles : chatAttachments;
+  const visibleItems = getVisibleSessionFiles(session);
 
   if (visibleItems.length === 0) {
     chatAttachmentTray.innerHTML = "";
@@ -294,8 +690,8 @@ function renderChatAttachments() {
           <button
             class="composer-attachment-remove"
             type="button"
-            data-remove-attachment="${isReviewMode ? "" : escapeHtml(item.id)}"
-            data-remove-review-file="${isReviewMode ? escapeHtml(item.id) : ""}"
+            data-remove-attachment="${item.attachmentId ? escapeHtml(item.attachmentId) : ""}"
+            data-remove-review-file="${item.reviewFileId ? escapeHtml(item.reviewFileId) : ""}"
             aria-label="移除附件"
           >×</button>
         </div>
@@ -318,6 +714,7 @@ function addChatAttachments(files) {
     uploadedAt: Date.now(),
   }));
 
+  rememberChatAttachmentFiles(session.id, nextAttachments, files);
   session.chatAttachments = [...session.chatAttachments, ...nextAttachments];
   touchSession(session);
   renderHistory();
@@ -327,22 +724,7 @@ function addChatAttachments(files) {
 }
 
 function addReviewTempFiles(files) {
-  if (!Array.isArray(files) || files.length === 0) return;
-
-  const session = ensureActiveSession(input.value.trim());
-  const nextFiles = files.map((file) => ({
-    id: `r_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    fileName: file.name,
-    status: "ready",
-    size: file.size,
-    uploadedAt: Date.now(),
-  }));
-
-  session.reviewTempFiles = [...session.reviewTempFiles, ...nextFiles];
-  touchSession(session);
-  renderHistory();
-  renderChatAttachments();
-  showChat();
+  return uploadReviewTempFiles(files);
 }
 
 function removeChatAttachment(attachmentId) {
@@ -353,6 +735,7 @@ function removeChatAttachment(attachmentId) {
   if (!target) return;
 
   session.chatAttachments = session.chatAttachments.filter((attachment) => attachment.id !== attachmentId);
+  forgetChatAttachmentFile(session.id, attachmentId);
   touchSession(session);
   renderChatAttachments();
 
@@ -361,16 +744,45 @@ function removeChatAttachment(attachmentId) {
   }
 }
 
-function removeReviewTempFile(fileId) {
+async function removeReviewTempFile(fileId) {
   const session = getActiveSession();
   if (!session || !Array.isArray(session.reviewTempFiles)) return;
 
   const target = session.reviewTempFiles.find((file) => file.id === fileId);
   if (!target) return;
 
+  try {
+    await deleteSessionTempFile(fileId);
+  } catch (err) {
+    const rawMessage = String(err?.message || err || "");
+    const message = rawMessage.toLowerCase();
+    const statusCode = Number.isFinite(err?.status) ? err.status : null;
+    const missing = statusCode === 404 || message.includes("not found") || message.includes("(404)");
+    if (!missing) {
+      appendErrorMessage(`移除待审合同失败：${rawMessage}`);
+      return;
+    }
+  }
+
   session.reviewTempFiles = session.reviewTempFiles.filter((file) => file.id !== fileId);
+  session.chatAttachments.forEach((attachment) => {
+    if (attachment.promotedReviewFileId === fileId) {
+      attachment.promotedReviewFileId = null;
+    }
+  });
+  if (session.reviewTempFiles.length === 0) {
+    clearReviewTemplateState(session);
+  }
   touchSession(session);
   renderChatAttachments();
+}
+
+async function removeSessionFile(options = {}) {
+  const { attachmentId = "", reviewFileId = "" } = options;
+  const reviewPromise = reviewFileId ? removeReviewTempFile(reviewFileId) : Promise.resolve();
+  const attachmentPromise = attachmentId ? Promise.resolve(removeChatAttachment(attachmentId)) : Promise.resolve();
+  await reviewPromise;
+  await attachmentPromise;
 }
 
 function getComposerMode() {
@@ -404,6 +816,10 @@ function setComposerMode(mode) {
   }
 
   syncComposerModeUi();
+
+  if (nextMode === "contract-review" && session) {
+    void ensureReviewTempFiles(session);
+  }
 }
 
 function setMenuActive(target) {
@@ -660,8 +1076,8 @@ function appendUserMessage(text, save = true) {
   }
 }
 
-function appendLoadingMessage() {
-  return appendMessage("loading-msg", `<p>思考中<span class="thinking-dots">...</span></p>`);
+function appendLoadingMessage(text = "思考中") {
+  return appendMessage("loading-msg", `<p>${escapeHtml(text)}<span class="thinking-dots">...</span></p>`);
 }
 
 function appendErrorMessage(message, save = false) {
@@ -712,6 +1128,166 @@ function appendChatResponse(response, save = true) {
   }
 }
 
+function appendTemplateMatchResponse(session, query, save = true) {
+  const answer = buildReviewTemplateMatchSummary(session);
+  const templateMatch = {
+    query,
+    recommendedTemplateId: session?.reviewRecommendedTemplate?.id || null,
+    selectedTemplateId: session?.reviewSelectedTemplateId || null,
+    candidates: Array.isArray(session?.reviewTemplateCandidates)
+      ? session.reviewTemplateCandidates.map(normalizeReviewTemplate).filter(Boolean)
+      : [],
+  };
+
+  appendMessage("", buildReviewTemplateMessageHtml(answer, templateMatch));
+
+  if (save) {
+    pushMessageToActive({ type: "assistant", answer, citations: [], templateMatch });
+  }
+}
+
+async function uploadSessionTempFile(sessionId, kind, file) {
+  const formData = new FormData();
+  formData.append("session_id", sessionId);
+  formData.append("kind", kind);
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE}/session-files/upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `上传失败 (${response.status})`);
+  }
+
+  return response.json();
+}
+
+async function deleteSessionTempFile(fileId) {
+  const response = await fetch(`${API_BASE}/session-files/${encodeURIComponent(fileId)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const error = new Error(err.detail || `删除失败 (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
+async function clearSessionTempFiles(sessionId, kind) {
+  if (!sessionId) return { cleared: 0 };
+
+  const url = new URL(`${API_BASE}/session-files/session/${encodeURIComponent(sessionId)}`);
+  if (kind) {
+    url.searchParams.set("kind", kind);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `清理失败 (${response.status})`);
+  }
+
+  return response.json();
+}
+
+async function fetchReviewTemplateRecommendation(sessionId) {
+  const url = new URL(`${API_BASE}/contract-review/template-recommendation`);
+  url.searchParams.set("session_id", sessionId);
+
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `模板推荐失败 (${response.status})`);
+  }
+  return response.json();
+}
+
+async function refreshReviewTemplateRecommendation(sessionId) {
+  const session = getSessionById(sessionId);
+  if (!session) return;
+
+  if (!Array.isArray(session.reviewTempFiles) || session.reviewTempFiles.length === 0) {
+    clearReviewTemplateState(session);
+    touchSession(session);
+    return;
+  }
+
+  try {
+    const payload = await fetchReviewTemplateRecommendation(sessionId);
+    const currentSession = getSessionById(sessionId);
+    if (!currentSession) return;
+
+    const candidates = Array.isArray(payload.candidate_templates)
+      ? payload.candidate_templates.map(normalizeReviewTemplate).filter(Boolean)
+      : [];
+    const recommended = normalizeReviewTemplate(payload.recommended_template);
+    const candidateIds = new Set(candidates.map((item) => item.id));
+    const nextSelectedTemplateId =
+      currentSession.reviewSelectedTemplateId && candidateIds.has(currentSession.reviewSelectedTemplateId)
+        ? currentSession.reviewSelectedTemplateId
+        : recommended?.id || candidates[0]?.id || null;
+
+    currentSession.reviewRecommendedTemplate = recommended;
+    currentSession.reviewTemplateCandidates = candidates;
+    currentSession.reviewSelectedTemplateId = nextSelectedTemplateId;
+    touchSession(currentSession);
+  } catch (err) {
+    const currentSession = getSessionById(sessionId);
+    if (currentSession) {
+      clearReviewTemplateState(currentSession);
+      touchSession(currentSession);
+    }
+    throw err;
+  }
+}
+
+async function uploadReviewTempFiles(files) {
+  if (!Array.isArray(files) || files.length === 0) return;
+
+  const session = ensureActiveSession(input.value.trim());
+  activeSessionId = session.id;
+  persistSessions();
+  renderHistory();
+  showChat();
+
+  const uploadedItems = [];
+  const errors = [];
+
+  for (const file of files) {
+    try {
+      const result = await uploadSessionTempFile(session.id, "review_target", file);
+      const normalized = normalizeReviewTempFile(result);
+      if (normalized) {
+        uploadedItems.push(normalized);
+      }
+    } catch (err) {
+      errors.push(`${file.name}：${err.message}`);
+    }
+  }
+
+  if (uploadedItems.length > 0) {
+    clearReviewTemplateState(session);
+    session.reviewTempFiles = [...session.reviewTempFiles, ...uploadedItems];
+    touchSession(session);
+    renderHistory();
+    renderChatAttachments();
+  }
+
+  if (errors.length > 0) {
+    appendErrorMessage(`待审合同上传失败：\n${errors.join("\n")}`);
+  }
+}
+
 function executeContractReviewNoFileResponse(query) {
   const session = ensureActiveSession(query);
   activeSessionId = session.id;
@@ -752,6 +1328,10 @@ function renderSessionMessages(session) {
       return;
     }
     if (msg.type === "assistant") {
+      if (msg.templateMatch) {
+        appendMessage("", buildReviewTemplateMessageHtml(msg.answer || "", msg.templateMatch), false);
+        return;
+      }
       appendMessage("", buildAssistantHtml(msg.answer || "", msg.citations || []), false);
       return;
     }
@@ -804,8 +1384,16 @@ function renderHistory() {
         <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v8h-2v-8Zm4 0h2v8h-2v-8ZM7 10h2v8H7v-8Z"/>
       </svg>
     `;
-    del.addEventListener("click", (event) => {
+    del.addEventListener("click", async (event) => {
       event.stopPropagation();
+      try {
+        await clearSessionTempFiles(session.id, "review_target");
+      } catch (err) {
+        appendErrorMessage(`删除会话临时合同失败：${err.message}`);
+        return;
+      }
+
+      clearSessionAttachmentBridgeState(session.id);
       chatSessions = chatSessions.filter((s) => s.id !== session.id);
       if (activeSessionId === session.id) {
         activeSessionId = null;
@@ -895,6 +1483,110 @@ async function executeSearch(query) {
         answerText = normalized.answer || answerText || "已收到你的消息。";
         assistantStream.finalize(answerText, normalized.citations);
         pushMessageToActive({ type: "assistant", answer: answerText, citations: normalized.citations });
+        finalized = true;
+        return;
+      }
+
+      if (item.type === "error") {
+        throw new Error(item.detail || "流式响应失败");
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer = consumeJsonLines(buffer, decoder.decode(value, { stream: true }), handleStreamItem);
+    }
+
+    buffer = consumeJsonLines(buffer, decoder.decode(), handleStreamItem);
+
+    if (!finalized) {
+      throw new Error("流式响应提前结束");
+    }
+  } catch (err) {
+    if (loadingNode?.isConnected) {
+      loadingNode.remove();
+    }
+    appendErrorMessage(`无法连接到后端服务：${err.message}`, true);
+  }
+}
+
+async function executeContractReview(query, templateId, options = {}) {
+  const { appendUser = true } = options;
+  const session = ensureActiveSession(query);
+  activeSessionId = session.id;
+  persistSessions();
+  renderHistory();
+
+  showChat();
+  if (appendUser) {
+    appendUserMessage(query, true);
+  }
+  let loadingNode = appendLoadingMessage();
+  let assistantStream = null;
+  let answerText = "";
+  let finalized = false;
+
+  try {
+    const response = await fetch(`${API_BASE}/contract-review/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: session.id,
+        template_id: templateId,
+        query,
+      }),
+    });
+
+    if (!response.ok) {
+      if (loadingNode?.isConnected) {
+        loadingNode.remove();
+      }
+      const raw = await response.text();
+      let err = {};
+      try {
+        err = raw ? JSON.parse(raw) : {};
+      } catch {
+        err = { detail: raw };
+      }
+      appendErrorMessage(`请求失败 (${response.status})：${err.detail || "未知错误"}`, true);
+      return;
+    }
+
+    if (!response.body) {
+      throw new Error("当前环境不支持流式响应");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    const handleStreamItem = (item) => {
+      if (item.type === "delta") {
+        if (loadingNode?.isConnected) {
+          loadingNode.remove();
+          loadingNode = null;
+        }
+        if (!assistantStream) {
+          assistantStream = createStreamingAssistantMessage();
+        }
+        answerText += item.delta || "";
+        assistantStream.update(answerText);
+        return;
+      }
+
+      if (item.type === "done") {
+        if (loadingNode?.isConnected) {
+          loadingNode.remove();
+          loadingNode = null;
+        }
+        if (!assistantStream) {
+          assistantStream = createStreamingAssistantMessage();
+        }
+        const answer = item.answer || answerText || "已收到你的消息。";
+        answerText = answer;
+        assistantStream.finalize(answerText, []);
+        pushMessageToActive({ type: "assistant", answer: answerText, citations: [] });
         finalized = true;
         return;
       }
@@ -1142,22 +1834,58 @@ syncComposerModeUi();
 renderRightSidebarAttachments();
 syncRightSidebarTabUi();
 
-composer.addEventListener("submit", (e) => {
+composer.addEventListener("submit", async (e) => {
   e.preventDefault();
   const query = input.value.trim();
   if (!query) return;
+  input.value = "";
 
   if (getComposerMode() === "contract-review") {
-    const reviewTempFiles = getActiveSession()?.reviewTempFiles || [];
+    const session = ensureActiveSession(query);
+    session.lastReviewQuery = query;
+    touchSession(session);
+    await ensureReviewTempFiles(session, { reportMissing: true });
+    const reviewTempFiles = session?.reviewTempFiles || [];
     if (reviewTempFiles.length === 0) {
       executeContractReviewNoFileResponse(query);
-      input.value = "";
       return;
     }
+
+    showChat();
+    appendUserMessage(query, true);
+    const matchingNode = appendLoadingMessage("标准模板匹配中");
+
+    try {
+      await refreshReviewTemplateRecommendation(session.id);
+    } catch (err) {
+      if (matchingNode?.isConnected) {
+        matchingNode.remove();
+      }
+      appendErrorMessage(`模板匹配失败：${err.message}`, true);
+      return;
+    }
+
+    if (matchingNode?.isConnected) {
+      matchingNode.remove();
+    }
+
+    const selectedTemplate = getSelectedReviewTemplate(session);
+    if (!selectedTemplate) {
+      appendChatResponse(
+        {
+          answer: "当前无可用标准模板。请先在左侧标准模板库上传模板，或补充更合适的标准合同模板后再发起合同审查。",
+          citations: [],
+        },
+        true
+      );
+      return;
+    }
+
+    appendTemplateMatchResponse(session, query, true);
+    return;
   }
 
   executeSearch(query);
-  input.value = "";
 });
 
 document.querySelectorAll(".suggestions button").forEach((btn) => {
@@ -1208,32 +1936,55 @@ chatAttachmentInput.addEventListener("change", (event) => {
   }
 });
 
-reviewContractInput.addEventListener("change", (event) => {
+reviewContractInput.addEventListener("change", async (event) => {
   if (event.target instanceof HTMLInputElement) {
     const files = Array.from(event.target.files || []);
     if (files.length > 0) {
-      addReviewTempFiles(files);
+      await addReviewTempFiles(files);
     }
     event.target.value = "";
   }
 });
 
-chatAttachmentTray.addEventListener("click", (event) => {
+chatAttachmentTray.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-remove-attachment],[data-remove-review-file]");
   if (!target) return;
   const reviewFileId = target.getAttribute("data-remove-review-file") || "";
-  if (reviewFileId) {
-    removeReviewTempFile(reviewFileId);
-    return;
-  }
-
   const attachmentId = target.getAttribute("data-remove-attachment") || "";
-  if (attachmentId) {
-    removeChatAttachment(attachmentId);
+  if (reviewFileId || attachmentId) {
+    await removeSessionFile({ attachmentId, reviewFileId });
   }
 });
 
-chat.addEventListener("click", (event) => {
+chat.addEventListener("click", async (event) => {
+  const templateTrigger = event.target.closest("[data-review-template-select]");
+  if (templateTrigger) {
+    const session = getActiveSession();
+    const templateId = templateTrigger.getAttribute("data-review-template-select") || "";
+    const encodedQuery = templateTrigger.getAttribute("data-review-query") || "";
+    const query =
+      (encodedQuery ? decodeURIComponent(encodedQuery) : "") ||
+      (typeof session?.lastReviewQuery === "string" ? session.lastReviewQuery : "");
+
+    if (!session || !templateId || !query) return;
+    if (reviewSelectionLocksBySession.has(session.id)) return;
+
+    reviewSelectionLocksBySession.add(session.id);
+    session.reviewSelectedTemplateId = templateId;
+    session.lastReviewQuery = query;
+    removeLatestTemplateMatchMessage(session);
+    touchSession(session);
+    renderSessionMessages(session);
+    showChat();
+
+    try {
+      await executeContractReview(query, templateId, { appendUser: false });
+    } finally {
+      reviewSelectionLocksBySession.delete(session.id);
+    }
+    return;
+  }
+
   const trigger = event.target.closest(".citation-trigger");
   if (!trigger) return;
   const citations = decodeCitations(trigger.dataset.citations || "");

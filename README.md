@@ -106,3 +106,12 @@ python scripts/hook_checks.py pre-push
 - Contract review behavior is updated in OpenSpec:
   - Review requests are allowed even without uploaded contracts.
   - Backend should return an explicit "no contract available for review" result.
+
+## Latest Behavior (2026-04-05)
+
+- Contract review now waits for the user to send a review request before template matching starts.
+- Template matching runs first through `GET /contract-review/template-recommendation`.
+- The matched template options are rendered in the main chat stream instead of a separate area below the composer.
+- Review generation starts only after the user clicks a template option, then streams through `POST /contract-review/stream`.
+- The attachment tray now sits above the composer and shows removable session files across normal chat and contract-review mode.
+- Session temp uploads use `/session-files/upload`, `/session-files`, and `/session-files/{file_id}` and stay outside the persistent template/document library.
