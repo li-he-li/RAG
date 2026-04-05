@@ -114,5 +114,8 @@ python scripts/hook_checks.py pre-push
 - The matched template options are rendered in the main chat stream instead of a separate area below the composer.
 - Review generation starts only after the user clicks a template option, then streams through `POST /contract-review/stream`.
 - The attachment tray now sits above the composer and shows removable session files across normal chat and contract-review mode.
+- The right attachment sidebar now renders extracted text previews for current-session files, including PDF text when extraction succeeds.
 - Session temp uploads use `/session-files/upload`, `/session-files`, and `/session-files/{file_id}` and stay outside the persistent template/document library.
 - In normal chat mode, session `chat_attachment` files can now drive similar-case retrieval and are also passed into answer generation context for case-to-case similarity reasoning.
+- Similar-case retrieval now selects query-relevant attachment chunks from the latest uploaded chat attachment instead of relying on a fixed leading text slice.
+- All upload entries accept `.txt`, `.md`, `.pdf`, `.doc`, `.docx`, `.xls`, and `.xlsx`, subject to backend extraction availability.

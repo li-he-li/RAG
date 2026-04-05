@@ -53,6 +53,9 @@ let chatSessions = loadSessions();
 let activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY) || null;
 let draftSessionMode = "chat";
 const pendingAttachmentFilesBySession = new Map();
+const pendingUploadEntriesBySession = new Map();
+const reviewTempFileObjectsBySession = new Map();
+const filePreviewUrlsBySession = new Map();
 const promotedChatAttachmentIdsBySession = new Map();
 const warnedMissingReviewFilesBySession = new Set();
 const reviewFileSyncPromisesBySession = new Map();
@@ -75,6 +78,12 @@ function normalizeChatAttachment(attachment) {
     status: typeof attachment.status === "string" && attachment.status.trim() ? attachment.status : "ready",
     size: Number.isFinite(attachment.size) ? attachment.size : null,
     uploadedAt: Number.isFinite(attachment.uploadedAt) ? attachment.uploadedAt : Date.now(),
+    contentPreview:
+      typeof attachment.contentPreview === "string"
+        ? attachment.contentPreview
+        : typeof attachment.content_preview === "string"
+          ? attachment.content_preview
+          : "",
     chatTempFileId:
       typeof attachment.chatTempFileId === "string" && attachment.chatTempFileId.trim()
         ? attachment.chatTempFileId
@@ -126,6 +135,12 @@ function normalizeReviewTempFile(file) {
     status: typeof file.status === "string" && file.status.trim() ? file.status : "ready",
     size: Number.isFinite(file.size) ? file.size : Number.isFinite(file.size_bytes) ? file.size_bytes : null,
     uploadedAt: Number.isFinite(uploadedAtValue) ? uploadedAtValue : Date.now(),
+    contentPreview:
+      typeof file.contentPreview === "string"
+        ? file.contentPreview
+        : typeof file.content_preview === "string"
+          ? file.content_preview
+          : "",
   };
 }
 
@@ -170,6 +185,25 @@ function formatAttachmentSize(size) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatUploadProgressLabel(progress, stage = "uploading") {
+  if (stage === "processing") return "处理中";
+  if (!Number.isFinite(progress)) return "上传中";
+  return `上传中 ${Math.max(0, Math.min(100, Math.round(progress * 100)))}%`;
+}
+
+function formatUploadProgressValue(progress, stage = "uploading") {
+  if (stage === "processing") {
+    return 0.25;
+  }
+  if (!Number.isFinite(progress)) return 0;
+  return Math.max(0, Math.min(1, progress));
+}
+
+function formatUploadProgressText(progress, stage = "uploading") {
+  if (stage === "processing") return "…";
+  return `${Math.max(0, Math.min(100, Math.round((progress || 0) * 100)))}`;
 }
 
 function formatScorePercent(score) {
@@ -244,6 +278,7 @@ function getVisibleSessionFiles(session) {
       size: linkedReviewFile?.size ?? attachment.size,
       attachmentId: attachment.id,
       reviewFileId: linkedReviewFile?.id || null,
+      contentPreview: linkedReviewFile?.contentPreview || attachment.contentPreview || "",
     });
   });
 
@@ -255,6 +290,24 @@ function getVisibleSessionFiles(session) {
       size: file.size,
       attachmentId: null,
       reviewFileId: file.id,
+      contentPreview: file.contentPreview || "",
+    });
+  });
+
+  const pendingUploads = Array.from(pendingUploadEntriesBySession.get(session.id)?.values() || []).sort(
+    (left, right) => left.createdAt - right.createdAt
+  );
+  pendingUploads.forEach((entry) => {
+    items.push({
+      id: entry.id,
+      fileName: entry.fileName,
+      size: entry.size,
+      attachmentId: null,
+      reviewFileId: null,
+      isPendingUpload: true,
+      progress: entry.progress,
+      uploadStage: entry.stage,
+      contentPreview: "",
     });
   });
 
@@ -365,6 +418,26 @@ function getPromotedChatAttachmentIds(sessionId) {
   return ids;
 }
 
+function getReviewTempFileObjectStore(sessionId) {
+  if (!sessionId) return null;
+  let store = reviewTempFileObjectsBySession.get(sessionId);
+  if (!store) {
+    store = new Map();
+    reviewTempFileObjectsBySession.set(sessionId, store);
+  }
+  return store;
+}
+
+function getFilePreviewUrlStore(sessionId) {
+  if (!sessionId) return null;
+  let store = filePreviewUrlsBySession.get(sessionId);
+  if (!store) {
+    store = new Map();
+    filePreviewUrlsBySession.set(sessionId, store);
+  }
+  return store;
+}
+
 function rememberChatAttachmentFiles(sessionId, attachments, files) {
   if (!sessionId || !Array.isArray(attachments) || !Array.isArray(files) || attachments.length !== files.length) {
     return;
@@ -381,15 +454,141 @@ function rememberChatAttachmentFiles(sessionId, attachments, files) {
   });
 }
 
+function rememberReviewTempFiles(sessionId, reviewFiles, files) {
+  if (!sessionId || !Array.isArray(reviewFiles) || !Array.isArray(files) || reviewFiles.length !== files.length) {
+    return;
+  }
+
+  const store = getReviewTempFileObjectStore(sessionId);
+  if (!store) return;
+
+  reviewFiles.forEach((reviewFile, index) => {
+    const file = files[index];
+    if (reviewFile?.id && file instanceof File) {
+      store.set(reviewFile.id, file);
+    }
+  });
+}
+
 function forgetChatAttachmentFile(sessionId, attachmentId) {
   if (!sessionId || !attachmentId) return;
+  revokeSessionFilePreviewUrl(sessionId, `chat:${attachmentId}`);
   pendingAttachmentFilesBySession.get(sessionId)?.delete(attachmentId);
   promotedChatAttachmentIdsBySession.get(sessionId)?.delete(attachmentId);
 }
 
+function forgetReviewTempFile(sessionId, fileId) {
+  if (!sessionId || !fileId) return;
+  revokeSessionFilePreviewUrl(sessionId, `review:${fileId}`);
+  reviewTempFileObjectsBySession.get(sessionId)?.delete(fileId);
+}
+
+function revokeSessionFilePreviewUrl(sessionId, previewKey) {
+  if (!sessionId || !previewKey) return;
+  const store = filePreviewUrlsBySession.get(sessionId);
+  const url = store?.get(previewKey);
+  if (url) {
+    URL.revokeObjectURL(url);
+    store.delete(previewKey);
+  }
+  if (store && store.size === 0) {
+    filePreviewUrlsBySession.delete(sessionId);
+  }
+}
+
+function getSessionFilePreviewUrl(sessionId, previewKey, file) {
+  if (!sessionId || !previewKey || !(file instanceof File)) return "";
+  const store = getFilePreviewUrlStore(sessionId);
+  if (!store) return "";
+  const existing = store.get(previewKey);
+  if (existing) return existing;
+  const next = URL.createObjectURL(file);
+  store.set(previewKey, next);
+  return next;
+}
+
+function resolveVisibleItemLocalFile(session, item) {
+  if (!session?.id || !item) return null;
+  if (item.reviewFileId) {
+    const reviewFile = reviewTempFileObjectsBySession.get(session.id)?.get(item.reviewFileId);
+    if (reviewFile instanceof File) return reviewFile;
+  }
+  if (item.attachmentId) {
+    const chatFile = pendingAttachmentFilesBySession.get(session.id)?.get(item.attachmentId);
+    if (chatFile instanceof File) return chatFile;
+  }
+  return null;
+}
+
+function isPdfFile(file, fileName = "") {
+  if (file instanceof File && file.type === "application/pdf") return true;
+  return /\.pdf$/i.test(fileName || file?.name || "");
+}
+
+function getPendingUploadStore(sessionId) {
+  if (!sessionId) return null;
+  let store = pendingUploadEntriesBySession.get(sessionId);
+  if (!store) {
+    store = new Map();
+    pendingUploadEntriesBySession.set(sessionId, store);
+  }
+  return store;
+}
+
+function createPendingUploadEntries(sessionId, files, kind) {
+  if (!sessionId || !Array.isArray(files) || files.length === 0) return [];
+  const store = getPendingUploadStore(sessionId);
+  if (!store) return [];
+
+  const now = Date.now();
+  return files.map((file, index) => {
+    const entry = {
+      id: `pending_${kind}_${now}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+      kind,
+      fileName: file.name,
+      size: file.size,
+      progress: 0,
+      stage: "uploading",
+      createdAt: now + index,
+    };
+    store.set(entry.id, entry);
+    return entry;
+  });
+}
+
+function updatePendingUploadProgress(sessionId, uploadId, progress) {
+  const entry = pendingUploadEntriesBySession.get(sessionId)?.get(uploadId);
+  if (!entry) return;
+  entry.stage = "uploading";
+  entry.progress = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : entry.progress;
+}
+
+function markPendingUploadProcessing(sessionId, uploadId) {
+  const entry = pendingUploadEntriesBySession.get(sessionId)?.get(uploadId);
+  if (!entry) return;
+  entry.stage = "processing";
+}
+
+function removePendingUploadEntry(sessionId, uploadId) {
+  if (!sessionId || !uploadId) return;
+  const store = pendingUploadEntriesBySession.get(sessionId);
+  if (!store) return;
+  store.delete(uploadId);
+  if (store.size === 0) {
+    pendingUploadEntriesBySession.delete(sessionId);
+  }
+}
+
 function clearSessionAttachmentBridgeState(sessionId) {
   if (!sessionId) return;
+  const previewStore = filePreviewUrlsBySession.get(sessionId);
+  if (previewStore) {
+    previewStore.forEach((url) => URL.revokeObjectURL(url));
+  }
+  filePreviewUrlsBySession.delete(sessionId);
   pendingAttachmentFilesBySession.delete(sessionId);
+  pendingUploadEntriesBySession.delete(sessionId);
+  reviewTempFileObjectsBySession.delete(sessionId);
   promotedChatAttachmentIdsBySession.delete(sessionId);
   warnedMissingReviewFilesBySession.delete(sessionId);
   reviewFileSyncPromisesBySession.delete(sessionId);
@@ -464,6 +663,7 @@ async function ensureReviewTempFiles(session, options = {}) {
         if (normalized) {
           uploadedItems.push(normalized);
           promotedIds.push(item.attachmentId);
+          rememberReviewTempFiles(session.id, [normalized], [item.file]);
           const linkedAttachment = session.chatAttachments.find((attachment) => attachment.id === item.attachmentId);
           if (linkedAttachment) {
             linkedAttachment.promotedReviewFileId = normalized.id;
@@ -612,7 +812,7 @@ function getRightSidebarTab() {
 function renderRightSidebarAttachments() {
   if (!rightSidebarAttachmentsBody) return;
   const session = getActiveSession();
-  const attachments = Array.isArray(session?.chatAttachments) ? session.chatAttachments : [];
+  const attachments = getVisibleSessionFiles(session).filter((item) => !item.isPendingUpload);
 
   if (attachments.length === 0) {
     rightSidebarAttachmentsBody.className = "right-sidebar-empty";
@@ -622,14 +822,34 @@ function renderRightSidebarAttachments() {
 
   rightSidebarAttachmentsBody.className = "right-sidebar-attachment-list";
   rightSidebarAttachmentsBody.innerHTML = attachments
-    .map(
-      (attachment) => `
+    .map((attachment) => {
+      const localFile = resolveVisibleItemLocalFile(session, attachment);
+      const pdfPreview =
+        localFile && isPdfFile(localFile, attachment.fileName)
+          ? `
+            <iframe
+              class="right-sidebar-attachment-viewer"
+              src="${escapeHtml(getSessionFilePreviewUrl(session.id, `${attachment.reviewFileId ? "review" : "chat"}:${attachment.reviewFileId || attachment.attachmentId || attachment.id}`, localFile))}#toolbar=0&navpanes=0"
+              title="${escapeHtml(attachment.fileName)}"
+            ></iframe>
+          `
+          : "";
+      const previewBody =
+        pdfPreview ||
+        `<pre class="right-sidebar-attachment-preview">${escapeHtml(
+          attachment.contentPreview || "当前附件暂无可展示的文本内容。"
+        )}</pre>`;
+
+      return `
         <article class="right-sidebar-attachment-item">
-          <strong class="right-sidebar-attachment-name" title="${escapeHtml(attachment.fileName)}">${escapeHtml(attachment.fileName)}</strong>
-          <div class="right-sidebar-attachment-meta">${escapeHtml(formatAttachmentSize(attachment.size)) || "未知大小"}</div>
+          <div class="right-sidebar-attachment-head">
+            <strong class="right-sidebar-attachment-name" title="${escapeHtml(attachment.fileName)}">${escapeHtml(attachment.fileName)}</strong>
+            <div class="right-sidebar-attachment-meta">${escapeHtml(formatAttachmentSize(attachment.size)) || "未知大小"}</div>
+          </div>
+          <div class="right-sidebar-attachment-stage">${previewBody}</div>
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
@@ -687,21 +907,44 @@ function renderChatAttachments() {
 
   chatAttachmentTray.innerHTML = visibleItems
     .map(
-      (item) => `
+      (item) => {
+        const progressLabel = item.isPendingUpload
+          ? formatUploadProgressLabel(item.progress, item.uploadStage)
+          : formatAttachmentSize(item.size);
+        const progressValue = formatUploadProgressValue(item.progress, item.uploadStage);
+        const progressText = formatUploadProgressText(item.progress, item.uploadStage);
+
+        return `
         <div class="composer-attachment-chip" data-attachment-id="${escapeHtml(item.id)}">
           <div class="composer-attachment-meta">
             <span class="composer-attachment-name" title="${escapeHtml(item.fileName)}">${escapeHtml(item.fileName)}</span>
-            <span class="composer-attachment-size">${escapeHtml(formatAttachmentSize(item.size))}</span>
+            <span class="composer-attachment-size">${escapeHtml(progressLabel)}</span>
           </div>
-          <button
-            class="composer-attachment-remove"
-            type="button"
-            data-remove-attachment="${item.attachmentId ? escapeHtml(item.attachmentId) : ""}"
-            data-remove-review-file="${item.reviewFileId ? escapeHtml(item.reviewFileId) : ""}"
-            aria-label="移除附件"
-          >×</button>
+          ${
+            item.isPendingUpload
+              ? `
+                <div
+                  class="composer-attachment-progress ${item.uploadStage === "processing" ? "processing" : ""}"
+                  style="--progress:${progressValue}"
+                  aria-label="${escapeHtml(progressLabel)}"
+                  title="${escapeHtml(progressLabel)}"
+                >
+                  <span>${escapeHtml(progressText)}</span>
+                </div>
+              `
+              : `
+                <button
+                  class="composer-attachment-remove"
+                  type="button"
+                  data-remove-attachment="${item.attachmentId ? escapeHtml(item.attachmentId) : ""}"
+                  data-remove-review-file="${item.reviewFileId ? escapeHtml(item.reviewFileId) : ""}"
+                  aria-label="移除附件"
+                >×</button>
+              `
+          }
         </div>
       `
+      }
     )
     .join("");
   chatAttachmentTray.classList.remove("hidden");
@@ -720,10 +963,24 @@ async function addChatAttachments(files) {
   const nextAttachments = [];
   const successfulFiles = [];
   const errors = [];
+  const pendingEntries = createPendingUploadEntries(session.id, files, "chat");
+  renderChatAttachments();
 
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
+    const pendingEntry = pendingEntries[index];
     try {
-      const result = await uploadSessionTempFile(session.id, "chat_attachment", file);
+      const result = await uploadSessionTempFile(session.id, "chat_attachment", file, {
+        onProgress: (progress) => {
+          if (!pendingEntry) return;
+          updatePendingUploadProgress(session.id, pendingEntry.id, progress);
+          renderChatAttachments();
+        },
+        onUploadSent: () => {
+          if (!pendingEntry) return;
+          markPendingUploadProcessing(session.id, pendingEntry.id);
+          renderChatAttachments();
+        },
+      });
       const normalized = normalizeReviewTempFile(result);
       nextAttachments.push({
         id: `a_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -731,11 +988,17 @@ async function addChatAttachments(files) {
         status: "ready",
         size: file.size,
         uploadedAt: Date.now(),
+        contentPreview: normalized?.contentPreview || "",
         chatTempFileId: normalized?.id || null,
       });
       successfulFiles.push(file);
     } catch (err) {
       errors.push(`${file.name}：${err.message}`);
+    } finally {
+      if (pendingEntry) {
+        removePendingUploadEntry(session.id, pendingEntry.id);
+        renderChatAttachments();
+      }
     }
   }
 
@@ -810,6 +1073,7 @@ async function removeReviewTempFile(fileId) {
   }
 
   session.reviewTempFiles = session.reviewTempFiles.filter((file) => file.id !== fileId);
+  forgetReviewTempFile(session.id, fileId);
   session.chatAttachments.forEach((attachment) => {
     if (attachment.promotedReviewFileId === fileId) {
       attachment.promotedReviewFileId = null;
@@ -1204,23 +1468,57 @@ function appendTemplateMatchResponse(session, query, save = true) {
   }
 }
 
-async function uploadSessionTempFile(sessionId, kind, file) {
+async function uploadSessionTempFile(sessionId, kind, file, options = {}) {
+  const { onProgress, onUploadSent } = options;
   const formData = new FormData();
   formData.append("session_id", sessionId);
   formData.append("kind", kind);
   formData.append("file", file);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/session-files/upload`);
 
-  const response = await fetch(`${API_BASE}/session-files/upload`, {
-    method: "POST",
-    body: formData,
+    xhr.upload.addEventListener("progress", (event) => {
+      if (typeof onProgress !== "function") return;
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(event.loaded / event.total);
+        return;
+      }
+      onProgress(0);
+    });
+
+    xhr.upload.addEventListener("load", () => {
+      if (typeof onUploadSent === "function") {
+        onUploadSent();
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        payload = {};
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+        return;
+      }
+
+      reject(new Error(payload.detail || `上传失败 (${xhr.status})`));
+    });
+
+    xhr.addEventListener("error", () => {
+      reject(new Error("上传失败，网络连接异常"));
+    });
+
+    xhr.addEventListener("abort", () => {
+      reject(new Error("上传已取消"));
+    });
+
+    xhr.send(formData);
   });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `上传失败 (${response.status})`);
-  }
-
-  return response.json();
 }
 
 async function deleteSessionTempFile(fileId) {
@@ -1320,16 +1618,36 @@ async function uploadReviewTempFiles(files) {
 
   const uploadedItems = [];
   const errors = [];
+  const pendingEntries = createPendingUploadEntries(session.id, files, "review");
+  renderChatAttachments();
 
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
+    const pendingEntry = pendingEntries[index];
     try {
-      const result = await uploadSessionTempFile(session.id, "review_target", file);
+      const result = await uploadSessionTempFile(session.id, "review_target", file, {
+        onProgress: (progress) => {
+          if (!pendingEntry) return;
+          updatePendingUploadProgress(session.id, pendingEntry.id, progress);
+          renderChatAttachments();
+        },
+        onUploadSent: () => {
+          if (!pendingEntry) return;
+          markPendingUploadProcessing(session.id, pendingEntry.id);
+          renderChatAttachments();
+        },
+      });
       const normalized = normalizeReviewTempFile(result);
       if (normalized) {
         uploadedItems.push(normalized);
+        rememberReviewTempFiles(session.id, [normalized], [file]);
       }
     } catch (err) {
       errors.push(`${file.name}：${err.message}`);
+    } finally {
+      if (pendingEntry) {
+        removePendingUploadEntry(session.id, pendingEntry.id);
+        renderChatAttachments();
+      }
     }
   }
 

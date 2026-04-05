@@ -14,6 +14,7 @@ from app.models.schemas import SessionTempFileItem, SessionTempFileKind
 
 
 UTC = timezone.utc
+MAX_CONTENT_PREVIEW_CHARS = 4000
 
 
 @dataclass(slots=True)
@@ -170,6 +171,7 @@ class SessionTempFileStore:
             file_name=record.file_name,
             size_bytes=record.size_bytes,
             content_chars=len(record.content),
+            content_preview=record.content[:MAX_CONTENT_PREVIEW_CHARS] if record.content else None,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

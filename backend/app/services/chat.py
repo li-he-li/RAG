@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from app.models.schemas import ChatCitation, ChatRequest, ChatResponse, SessionTempFileKind
+from app.services.attachment_focus import select_attachment_focus
 from app.services.embedding import encode_single
 from app.services.retrieval import dual_retrieve, rank_and_aggregate, understand_query
 from app.services.session_files import session_temp_file_store
@@ -26,16 +27,14 @@ from app.services.traceability import validate_and_enrich_results
 
 logger = logging.getLogger(__name__)
 
-MAX_ATTACHMENT_QUERY_CHARS = 5000
-MAX_ATTACHMENT_PROMPT_CHARS = 3000
-
-
 @dataclass(slots=True)
 class ChatRetrievalInput:
     query_text: str
     attachment_used: bool = False
     attachment_file_name: str | None = None
-    attachment_excerpt: str | None = None
+    attachment_overview_summary: str | None = None
+    attachment_focus_summary: str | None = None
+    attachment_focus_blocks: list[str] | None = None
 
 
 def _normalize_session_id(session_id: str | None) -> str | None:
@@ -62,13 +61,21 @@ def _build_attachment_query_input(request: ChatRequest) -> ChatRetrievalInput:
     if not attachment_content:
         return ChatRetrievalInput(query_text=request.query)
 
-    clipped = attachment_content[:MAX_ATTACHMENT_QUERY_CHARS]
-    query_text = f"{clipped}\n\n{request.query}"
+    focus = select_attachment_focus(
+        content=attachment_content,
+        file_name=latest.file_name,
+        query=request.query,
+    )
+    if not focus:
+        return ChatRetrievalInput(query_text=request.query)
+
     return ChatRetrievalInput(
-        query_text=query_text,
+        query_text=focus.focused_query_text,
         attachment_used=True,
         attachment_file_name=latest.file_name,
-        attachment_excerpt=attachment_content[:MAX_ATTACHMENT_PROMPT_CHARS],
+        attachment_overview_summary=focus.overview_summary,
+        attachment_focus_summary=focus.focus_summary,
+        attachment_focus_blocks=[chunk.as_prompt_block() for chunk in focus.focus_chunks],
     )
 
 
@@ -183,7 +190,8 @@ def _build_deepseek_payload(
     """Build a DeepSeek chat-completions payload."""
     if citations:
         evidence_context = _build_context(citations)
-        if retrieval_input.attachment_used and retrieval_input.attachment_excerpt:
+        if retrieval_input.attachment_used and retrieval_input.attachment_focus_summary:
+            attachment_focus_context = "\n\n".join(retrieval_input.attachment_focus_blocks or [])
             system_prompt = (
                 "你是法律类案检索对比助手。你需要同时参考用户上传的原案件材料和给定数据库证据回答。"
                 "不要忽略原案件内容，也不要编造事实。"
@@ -192,8 +200,12 @@ def _build_deepseek_payload(
             )
             user_prompt = (
                 f"用户问题：{query}\n\n"
-                f"用户上传的原案件材料（文件：{retrieval_input.attachment_file_name or '未命名附件'}）：\n"
-                f"{retrieval_input.attachment_excerpt}\n\n"
+                f"用户上传的原案件材料（文件：{retrieval_input.attachment_file_name or '未命名附件'}）整体摘要：\n"
+                f"{retrieval_input.attachment_overview_summary or retrieval_input.attachment_focus_summary}\n\n"
+                "用户上传案件的重点摘要：\n"
+                f"{retrieval_input.attachment_focus_summary}\n\n"
+                "用户上传案件的重点原文片段：\n"
+                f"{attachment_focus_context}\n\n"
                 "数据库检索到的候选证据如下：\n"
                 f"{evidence_context}\n\n"
                 "请基于原案件材料与候选证据进行回答，至少覆盖：\n"
@@ -214,7 +226,7 @@ def _build_deepseek_payload(
             )
         temperature = 0.1
     else:
-        if retrieval_input.attachment_used and retrieval_input.attachment_excerpt:
+        if retrieval_input.attachment_used and retrieval_input.attachment_focus_summary:
             system_prompt = (
                 "你是法律类案检索助手。当前知识库没有命中可引用案例证据。"
                 "你可以参考用户上传的原案件材料说明当前无法完成强相似案例对比，"
@@ -222,8 +234,10 @@ def _build_deepseek_payload(
             )
             user_prompt = (
                 f"用户问题：{query}\n\n"
-                f"用户上传的原案件材料（文件：{retrieval_input.attachment_file_name or '未命名附件'}）：\n"
-                f"{retrieval_input.attachment_excerpt}\n\n"
+                f"用户上传的原案件材料整体摘要（文件：{retrieval_input.attachment_file_name or '未命名附件'}）：\n"
+                f"{retrieval_input.attachment_overview_summary or retrieval_input.attachment_focus_summary}\n\n"
+                "用户上传案件的重点摘要：\n"
+                f"{retrieval_input.attachment_focus_summary}\n\n"
                 "当前知识库无可引用证据。请说明目前无法基于数据库给出可靠相似案例结论，"
                 "并简要指出后续应补充什么信息。"
             )

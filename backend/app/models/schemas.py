@@ -229,6 +229,10 @@ class SessionTempFileItem(BaseModel):
     file_name: str = Field(..., description="Original uploaded file name")
     size_bytes: int = Field(..., ge=0, description="Uploaded file size in bytes")
     content_chars: int = Field(..., ge=0, description="Extracted text character count")
+    content_preview: Optional[str] = Field(
+        default=None,
+        description="Preview of extracted text for inline attachment display",
+    )
     created_at: datetime = Field(..., description="Temporary file creation time")
     updated_at: datetime = Field(..., description="Temporary file last update time")
 

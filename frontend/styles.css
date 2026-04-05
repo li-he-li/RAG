@@ -409,29 +409,64 @@ input {
 
 .right-sidebar-attachment-list {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .right-sidebar-attachment-item {
   border: 1px solid #d9e2f0;
   background: #f8fbff;
-  border-radius: 10px;
-  padding: 8px 10px;
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
 }
 
 .right-sidebar-attachment-name {
   display: block;
   font-size: 13px;
   color: #26374f;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .right-sidebar-attachment-meta {
-  margin-top: 4px;
   color: #5f7390;
   font-size: 11px;
+}
+
+.right-sidebar-attachment-head {
+  display: grid;
+  gap: 4px;
+}
+
+.right-sidebar-attachment-stage {
+  min-height: 360px;
+}
+
+.right-sidebar-attachment-preview {
+  margin: 0;
+  padding: 14px;
+  min-height: 360px;
+  max-height: min(72vh, 720px);
+  overflow: auto;
+  border: 1px solid #dfe8f5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #314764;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.right-sidebar-attachment-viewer {
+  width: 100%;
+  min-height: 360px;
+  height: min(72vh, 720px);
+  display: block;
+  border: 1px solid #dfe8f5;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 body.resizing-citation-sidebar {
@@ -1224,6 +1259,51 @@ body.resizing-citation-sidebar {
 .composer-attachment-remove:hover {
   background: #e7f0fd;
   color: #27486f;
+}
+
+.composer-attachment-progress {
+  --progress: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: conic-gradient(#5f86bd calc(var(--progress) * 1turn), #dce6f5 0);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.composer-attachment-progress.processing {
+  background: conic-gradient(#5f86bd 22%, #dce6f5 0);
+  animation: composer-upload-processing-spin 0.9s linear infinite;
+}
+
+.composer-attachment-progress::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f7fbff;
+  grid-area: 1 / 1;
+}
+
+.composer-attachment-progress span {
+  grid-area: 1 / 1;
+  position: relative;
+  z-index: 1;
+  font-size: 8px;
+  line-height: 1;
+  color: #35598a;
+  font-weight: 700;
+}
+
+@keyframes composer-upload-processing-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1100px) {
