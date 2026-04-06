@@ -1,136 +1,203 @@
-﻿# RAG Legal Similarity Search
+# RAG Legal Similarity Search
 
-娉曞緥鏂囦功鐩镐技妫€绱笌璇佹嵁婧簮绯荤粺銆傞」鐩寘鍚?FastAPI 鍚庣銆佸師鐢熼潤鎬佸墠绔紝浠ュ強鐢ㄤ簬璇勪及妫€绱㈣川閲忕殑绂荤嚎鑴氭湰銆?
-## Structure
+法律文书相似检索、证据溯源与法律工作流实验项目。当前项目包含三条主要能力链路：
 
-- `backend/`: FastAPI 鏈嶅姟銆佸悜閲忔绱€佹枃妗ｅ叆搴撱€佽瘎浼拌剼鏈?- `frontend/`: 鑱婂ぉ寮忔绱㈠墠绔?- `openspec/`: 闇€姹傘€佽璁°€佷换鍔℃媶瑙?- `鍚姩璇存槑.md`: 鏈湴涓枃鍚姩璇存槑
-- `椤圭洰鏋舵瀯鍥?html`: 鏋舵瀯鎬昏鍥?
-## Current Frontend
+- 普通聊天检索
+- 合同审查
+- 对方观点预测
 
-- 涓昏亰澶╃獥鍙ｆ敮鎸佹暟鎹簱璇佹嵁鏀拺鐨勬祦寮忓洖绛斻€?- 鍥炵瓟涓殑鈥滃紩鐢ㄦ潵婧愨€濅細鍦ㄨ亰澶╁尯鍙充晶灞曞紑鐙珛渚ф爮锛屾敮鎸佸叧闂拰妗岄潰绔嫋鎷借皟瀹姐€?- 宸︿晶鏍忓寘鍚€滃悎鍚屽鏌モ€濆叆鍙ｏ紝褰撳墠鐢ㄤ簬鏍囧噯妯℃澘鐩稿叧鑳藉姏鐨勫墠绔叆鍙ｉ鐣欍€?
-## Environment
+## 项目结构
+
+- `backend/`
+  FastAPI 后端、检索、文档入库、模板管理、预测链路
+- `frontend/`
+  原生静态前端
+- `openspec/`
+  需求、设计、任务拆解
+- `启动说明.md`
+  本地中文启动说明
+- `项目架构图.html`
+  架构示意
+
+## 当前功能
+
+### 1. 普通聊天检索
+
+- 基于数据库证据进行相似检索和回答
+- 支持会话级附件上传
+- 支持引用来源侧栏查看
+
+### 2. 合同审查
+
+- 左侧面板管理标准模板
+- 聊天区先发问题，再在主聊天流中选择模板
+- 支持审查目标合同上传
+- 模板推荐通过 `/api/contract-review/template-recommendation`
+- 审查生成通过 `/api/contract-review/stream`
+
+### 3. 对方观点预测
+
+- 独立的 `opponent-prediction` 模式
+- 左侧 `观点预测` 面板用于管理案件模板
+- 案件模板包含：
+  - `案件名称` 必填
+  - `案情材料` 必填
+  - `对方语料` 选填
+- 聊天区先发送自然语言问题，再在主聊天流中选择案件模板
+- 预测链路独立于普通聊天和合同审查
+- 当前预测链路包含：
+  - 问题理解
+  - 案件画像重构
+  - 对方视角检索
+  - 对方观点生成
+  - 对方口吻生成
+  - 我方应对建议
+- 报告结果支持：
+  - 动态标题
+  - `对方可能会这样表述`
+  - `主打 / 次打 / 补充`
+  - 引用支持项与推断项区分
+
+## 环境要求
 
 - Python 3.12
 - Docker Desktop
-- PostgreSQL 瀹瑰櫒 `legal-search-postgres`
-- Qdrant 瀹瑰櫒 `legal-search-qdrant`
+- PostgreSQL 容器：`legal-search-postgres`
+- Qdrant 容器：`legal-search-qdrant`
 
-妯″瀷缂撳瓨鐩綍鏄?`backend/data/models_cache/`锛屽睘浜庤繍琛屼骇鐗╋紝涓嶇撼鍏ョ増鏈帶鍒躲€?
-## Setup
+以下内容属于本地运行产物，不应提交：
 
-1. 瀹夎鍚庣渚濊禆锛?
+- `backend/data/models_cache/`
+- `backend/.env`
+- `.tmp/`
+- 日志文件
+- `__pycache__/`
+
+## 本地启动
+
+### 1. 安装依赖
+
 ```powershell
 cd backend
 pip install -r requirements.txt
 ```
 
-2. 澶嶅埗鐜鍙橀噺妯℃澘锛?
+### 2. 配置环境变量
+
 ```powershell
+cd backend
 Copy-Item .env.example .env
 ```
 
-3. 鍚姩 Docker Desktop锛屽苟纭繚 PostgreSQL 涓?Qdrant 鍙闂€?
-4. 鍚姩鍚庣锛?
+然后按实际情况填写 `backend/.env`。
+
+### 3. 启动后端
+
 ```powershell
 cd backend
 D:\Anaconda\envs\legal-search\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-5. 鍚姩鍓嶇闈欐€侀〉锛?
+### 4. 启动前端
+
 ```powershell
 D:\Anaconda\python.exe -m http.server 3000 --bind 127.0.0.1 --directory frontend
 ```
 
-## Local / Public Run Modes
+### 5. 验证
 
-- Existing command `python -m http.server 3000` still works.
-- Frontend API base is now resolved from the current page host (`http://<current-host>:8000/api`) and can be overridden via `localStorage.apiBaseOverride`.
+- 后端健康检查：`http://127.0.0.1:8000/api/health`
+- 前端页面：`http://127.0.0.1:3000/index.html`
 
-Use these scripts to switch by command:
+## 前端与 API
 
-```powershell
-# Local debug (127.0.0.1 only)
-powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1
+- 前端默认按当前页面主机解析后端地址：`http://<current-host>:8000/api`
+- 可通过 `localStorage.apiBaseOverride` 覆盖 API 基地址
 
-# Public/LAN mode (bind 0.0.0.0)
-powershell -ExecutionPolicy Bypass -File scripts/start-public.ps1
-```
+## 观点预测相关说明
 
-For teacher access over Internet:
-- Forward TCP `3000` and `8000` from router to this machine.
-- Allow inbound firewall rules for `3000` and `8000`.
-- Share `http://<your-public-ip>:3000/index.html`.
+### 案件模板存储
+
+- 观点预测模板不会进入主检索文档库 `documents / paragraphs`
+- 观点预测使用独立的数据表和服务
+- 删除策略为硬删除
+
+### 对方语料的作用
+
+- 对方语料会参与案件画像重构
+- 会影响对方有利点提取、检索 query 构造、观点排序和对方口吻生成
+- 对方语料越接近真实答辩口径，预测结果越贴近真实对方表达
+
+### 案件画像
+
+当前案件画像不是简单硬编码结论，而是：
+
+- 规则层先做候选线索收集
+- LLM 再基于候选线索和精选片段做结构化重构
+- LLM 失败时才回退到保守候选结果
+
 ## Git Hooks
 
-浠撳簱鍐呮彁渚?`.githooks/`锛屽寘鍚?`pre-commit`銆乣pre-push`銆乣commit-msg`銆?
-鍚敤鏂瑰紡锛?
+仓库已提供 `.githooks/`：
+
+- `pre-commit`
+- `pre-push`
+- `commit-msg`
+
+启用方式：
+
 ```powershell
 git config core.hooksPath .githooks
 ```
 
-Hook 璇存槑锛?
-- `pre-commit`: 浠呮鏌ュ凡鏆傚瓨鏂囦欢锛岄樆姝㈡彁浜?`.env`銆佹ā鍨嬬紦瀛樸€佹棩蹇椼€乣__pycache__` 绛夊瀮鍦炬枃浠讹紝骞跺鏆傚瓨鐨?Python/JSON 鏂囦欢鍋氳娉曟牎楠屻€?- `pre-push`: 瀵逛粨搴撳唴 Python 鏂囦欢鍋氬叏閲忚娉曟牎楠岋紝鏍￠獙 JSON/JSONL 鏂囦欢缁撴瀯锛屽苟纭 README 涓寘鍚?hook 浣跨敤璇存槑銆?- `commit-msg`: 鏍￠獙 conventional commit锛屽厑璁哥殑绫诲瀷涓?`feat`銆乣fix`銆乣docs`銆乣style`銆乣refactor`銆乣test`銆乣chore`銆乣perf`銆乣ci`銆乣build`銆乣revert`銆?
-蹇呰鏃跺彲鐢?`--no-verify` 璺宠繃 hook锛屼絾浠呴€傚悎绱ф€ユ儏鍐碉紝姝ｅ父寮€鍙戜笉搴斾緷璧栥€?
-## Validation
+### Hook 行为
 
-鏈粨搴撶洰鍓嶆病鏈夊畬鏁磋嚜鍔ㄥ寲娴嬭瘯濂椾欢銆傛彁浜ゅ墠鑷冲皯鎵ц锛?
+- `pre-commit`
+  只检查已暂存文件，阻止提交 `.env`、模型缓存、日志、`__pycache__` 等垃圾文件，并校验 Python / JSON 基本语法
+- `pre-push`
+  对仓库内 Python 文件做全量语法检查，校验 JSON/JSONL，并确认 README 中包含 hook 说明
+- `commit-msg`
+  校验 conventional commit，允许的类型包括：
+  - `feat`
+  - `fix`
+  - `docs`
+  - `style`
+  - `refactor`
+  - `test`
+  - `chore`
+  - `perf`
+  - `ci`
+  - `build`
+  - `revert`
+
+必要时可以使用 `--no-verify` 跳过 hook，但只适合紧急情况。
+
+## 提交前最少校验
+
 ```powershell
+python scripts/hook_checks.py pre-commit
 python scripts/hook_checks.py pre-push
 ```
 
-濡傛灉浣犻渶瑕侀獙璇佽繍琛岄摼璺紝鍐嶉澶栨鏌ワ細
+如果改了前端主脚本，建议再跑：
 
-- `http://127.0.0.1:8000/api/health`
-- `http://127.0.0.1:3000/index.html`
+```powershell
+node --check frontend/app.js
+```
 
-## Notes
+## 最近更新
 
-- `backend/.env` 涓嶇撼鍏ョ増鏈帶鍒躲€?- `backend/data/models_cache/`銆佹棩蹇楁枃浠躲€佽В閲婂櫒缂撳瓨灞炰簬鏈湴杩愯浜х墿銆?- 褰撳墠鍓嶇渚濊禆鍚庣 `http://<current-host>:8000/api`銆?
-## Recent Updates (2026-04)
+### 2026-04-05
 
-- Chat composer now supports a shared upload entry that routes by mode:
-  - `chat` mode uploads session attachments for normal conversation.
-  - `contract-review` mode uploads review-target contracts.
-- The left `鍚堝悓瀹℃煡` panel is now a standard template library:
-  - Templates are uploaded, listed, and deleted through the dedicated left-side panel.
-  - Template management is separate from session attachments and review-target files.
-- The right sidebar is now tabbed (`Attachments` / `Citations`) and remains hidden by default.
-  - It opens when attachments are uploaded or when citation sources are clicked.
-  - Users can close the sidebar manually at any time.
-- Contract review behavior is updated in OpenSpec:
-  - Review requests are allowed even without uploaded contracts.
-  - Backend should return an explicit "no contract available for review" result.
+- 合同审查改成“先发问题，再在主聊天流中选模板”
+- 审查目标合同走会话级临时文件，不进入标准模板库
+- 普通聊天附件可参与相似检索和回答上下文
 
-## Latest Behavior (2026-04-05)
+### 2026-04-06
 
-- Contract review now waits for the user to send a review request before template matching starts.
-- Template matching runs first through `GET /contract-review/template-recommendation`.
-- The matched template options are rendered in the main chat stream instead of a separate area below the composer.
-- Review generation starts only after the user clicks a template option, then streams through `POST /contract-review/stream`.
-- The attachment tray now sits above the composer and shows removable session files across normal chat and contract-review mode.
-- The right attachment sidebar now renders extracted text previews for current-session files, including PDF text when extraction succeeds.
-- Session temp uploads use `/session-files/upload`, `/session-files`, and `/session-files/{file_id}` and stay outside the persistent template/document library.
-- In normal chat mode, session `chat_attachment` files can now drive similar-case retrieval and are also passed into answer generation context for case-to-case similarity reasoning.
-- Similar-case retrieval now selects query-relevant attachment chunks from the latest uploaded chat attachment instead of relying on a fixed leading text slice.
-- All upload entries accept `.txt`, `.md`, `.pdf`, `.doc`, `.docx`, `.xls`, and `.xlsx`, subject to backend extraction availability.
-
-## Opponent Prediction Mode (2026-04-06)
-
-- A dedicated `opponent-prediction` mode is now available alongside normal chat and contract review.
-- The left `观点预测` panel now acts as a case-template manager:
-  - `案件名称` is required.
-  - `案情材料` is required and persisted in the prediction domain tables.
-  - `对方语料` is optional and persisted separately from the main document library.
-- Prediction templates are stored outside the main `documents / paragraphs` search corpus.
-- In chat, users first send a natural-language request, then choose a case template from the main chat stream.
-- The backend prediction flow is independent from normal chat:
-  - question understanding
-  - case-profile reconstruction
-  - opponent-oriented retrieval
-  - opponent-viewpoint generation
-  - opponent-style wording generation
-- Prediction reports distinguish evidence-supported viewpoints from inference-only viewpoints and now include:
-  - dynamic answer titles based on the user question
-  - opponent-style statements (`对方可能会这样表述`)
-  - priority labels such as `主打 / 次打 / 补充`
-
+- 新增对方观点预测模式
+- 新增案件模板管理
+- 新增观点预测独立后端链路
+- 新增对方口吻输出
+- 新增问题驱动型结果重排
+- 新增案件画像重构流程
