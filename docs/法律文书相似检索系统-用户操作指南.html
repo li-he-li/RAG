@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>法律文书相似检索系统 - 用户操作指南</title>
+    <style>
+      :root {
+        --ink: #1f2937;
+        --subtle: #5b6472;
+        --brand: #1f6f5f;
+        --brand-soft: #eaf5f1;
+        --line: #d8e1dc;
+        --paper: #ffffff;
+        --panel: #f7fbf9;
+        --warn: #8a5a11;
+        --warn-bg: #fff6e7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        color: var(--ink);
+        background: #eef3f1;
+        line-height: 1.75;
+      }
+
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0 auto;
+        background: var(--paper);
+        padding: 18mm 16mm 20mm;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        line-height: 1.3;
+      }
+
+      h1 {
+        font-size: 30px;
+        color: #143d35;
+        margin-bottom: 10px;
+      }
+
+      h2 {
+        font-size: 22px;
+        color: #174a40;
+        margin-top: 26px;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 2px solid var(--line);
+      }
+
+      h3 {
+        font-size: 17px;
+        color: #214d45;
+        margin-top: 18px;
+        margin-bottom: 8px;
+      }
+
+      p {
+        margin: 8px 0;
+      }
+
+      ul,
+      ol {
+        margin: 8px 0 8px 22px;
+        padding: 0;
+      }
+
+      li {
+        margin: 6px 0;
+      }
+
+      .hero {
+        border: 1px solid var(--line);
+        background: linear-gradient(135deg, #f9fdfb 0%, #edf7f3 100%);
+        border-radius: 18px;
+        padding: 20px;
+      }
+
+      .hero p {
+        color: var(--subtle);
+      }
+
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: var(--brand-soft);
+        color: var(--brand);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .tip,
+      .warn,
+      .card {
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin: 12px 0;
+      }
+
+      .tip {
+        background: #eef7ff;
+        border: 1px solid #d6e8fb;
+      }
+
+      .warn {
+        background: var(--warn-bg);
+        border: 1px solid #f1dfb8;
+        color: var(--warn);
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .k-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+
+      .k-table th,
+      .k-table td {
+        border: 1px solid var(--line);
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .k-table th {
+        background: #f1f7f4;
+        color: #23453d;
+        width: 28%;
+      }
+
+      .step {
+        border-left: 4px solid var(--brand);
+        padding-left: 12px;
+        margin: 14px 0;
+      }
+
+      .mono {
+        font-family: "Consolas", "Courier New", monospace;
+        background: #f4f6f8;
+        border-radius: 6px;
+        padding: 1px 6px;
+      }
+
+      .footer {
+        margin-top: 24px;
+        padding-top: 10px;
+        border-top: 1px dashed var(--line);
+        color: var(--subtle);
+        font-size: 13px;
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .page {
+          width: auto;
+          min-height: auto;
+          margin: 0;
+          padding: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <h1>法律文书相似检索系统<br />用户操作指南</h1>
+        <p>
+          这份文档是给日常使用系统的人看的，不是给开发人员看的。
+          你不需要懂代码，只要照着页面上的按钮一步一步操作，就能完成文件上传、普通检索、合同审查、观点预测和类案检索。
+        </p>
+        <div class="pill-row">
+          <span class="pill">普通聊天检索</span>
+          <span class="pill">合同审查</span>
+          <span class="pill">观点预测</span>
+          <span class="pill">类案检索</span>
+          <span class="pill">引用来源查看</span>
+        </div>
+      </section>
+
+      <h2>1. 先认识页面</h2>
+      <table class="k-table">
+        <thead>
+          <tr>
+            <th>位置</th>
+            <th>你能做什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>左侧菜单</td>
+            <td>进入“文件管理”“合同审查”“观点预测”“系统状态”等功能区。</td>
+          </tr>
+          <tr>
+            <td>中间聊天区</td>
+            <td>输入问题、查看回答、查看合同审查结果、观点预测结果和类案检索结果。</td>
+          </tr>
+          <tr>
+            <td>输入框左侧按钮</td>
+            <td>上传文件，或者切换成“合同审查”“观点预测”“类案检索”模式。</td>
+          </tr>
+          <tr>
+            <td>右侧栏</td>
+            <td>查看当前会话附件，或者查看回答引用了哪些文件片段。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="tip">
+        <strong>记住一个最实用的原则：</strong>
+        不同功能用的“文件”不完全一样。普通聊天和类案检索主要看当前会话附件；合同审查要用标准模板加待审合同；观点预测要先建立案件模板。
+      </div>
+
+      <h2>2. 开始使用前，你要确认什么</h2>
+      <div class="card">
+        <p>如果系统已经有人帮你启动好了，你只需要打开网页即可。</p>
+        <p>如果需要你自己打开系统，通常使用下面两个地址：</p>
+        <ul>
+          <li>前端页面：<span class="mono">http://localhost:3000</span></li>
+          <li>后端服务：<span class="mono">http://localhost:8000</span></li>
+        </ul>
+      </div>
+
+      <div class="warn">
+        如果网页能打开，但一直查不到结果，先点左侧“系统状态”看看 PostgreSQL、Qdrant、Embedding、Reranker 是否已经就绪。
+      </div>
+
+      <h2>3. 最常用的 4 个功能怎么用</h2>
+
+      <h3>3.1 普通聊天检索：像聊天一样提问</h3>
+      <div class="step">
+        <strong>适合什么场景：</strong>
+        你想直接问系统一个法律问题，或者让它基于数据库里的材料给出一个回答。
+      </div>
+      <ol>
+        <li>直接在输入框输入你的问题。</li>
+        <li>点击发送按钮。</li>
+        <li>如果你想让回答结合你手头的材料，先上传聊天附件，再提问。</li>
+        <li>回答出来后，如果页面里出现“引用来源”，可以在右侧栏查看具体引用了哪几行内容。</li>
+      </ol>
+      <div class="tip">
+        <strong>说人话的建议：</strong>
+        问题不要只写“帮我看一下”，最好写成“请结合我上传的材料，判断对方是否构成违约，并说明依据”。
+      </div>
+
+      <h3>3.2 合同审查：先准备模板，再审目标合同</h3>
+      <div class="step">
+        <strong>适合什么场景：</strong>
+        你手里有一份待审合同，想按照某个标准模板去比对、找问题。
+      </div>
+      <ol>
+        <li>先点左侧“合同审查”。</li>
+        <li>在左侧模板库上传标准合同模板。模板会显示在“模板列表”里。</li>
+        <li>回到聊天区，点击输入框左侧的“合同审查”按钮，让它进入合同审查模式。</li>
+        <li>再点击回形针上传待审合同。</li>
+        <li>在输入框里写清楚你的要求，例如“请重点检查付款条款、违约责任和解除条件”。</li>
+        <li>发送后，系统会先帮你匹配模板，再生成审查结果。</li>
+      </ol>
+      <div class="warn">
+        <strong>容易混淆的点：</strong>
+        左侧上传的是“标准模板”，聊天区上传的是“待审合同”。这两个不是一回事。
+      </div>
+
+      <h3>3.3 观点预测：先建案件模板，再问问题</h3>
+      <div class="step">
+        <strong>适合什么场景：</strong>
+        你想知道“对方大概率会怎么说”“对方最可能从什么地方攻击我方证据”“我该怎么防”。
+      </div>
+      <ol>
+        <li>点击左侧“观点预测”。</li>
+        <li>填写案件名称。</li>
+        <li>上传“案情材料”。这是必填项。</li>
+        <li>如果你有答辩状、聊天记录、律师函等对方材料，也可以上传到“对方语料”。这一步是选填，但通常很有帮助。</li>
+        <li>点击“保存为案件模板”。</li>
+        <li>回到聊天区，点“观点预测”按钮切换模式。</li>
+        <li>直接输入问题，例如：
+          <ul>
+            <li>“对方最可能从哪些角度辩驳？”</li>
+            <li>“对方最可能攻击我方哪条证据？”</li>
+            <li>“如果对方主打诉讼时效，会怎么说？”</li>
+          </ul>
+        </li>
+        <li>系统会提示你选择案件模板，然后给出预测报告。</li>
+      </ol>
+      <div class="tip">
+        <strong>想让结果更像真人会怎么说：</strong>
+        对方语料越接近真实答辩口径，预测出来的话术通常越贴近真实场景。
+      </div>
+
+      <h3>3.4 类案检索：拿你上传的材料去找相似案件</h3>
+      <div class="step">
+        <strong>适合什么场景：</strong>
+        你已经有一份案件材料，想看看库里有没有相似案例、同案不同版本，或者相近争议的案件。
+      </div>
+      <ol>
+        <li>先在当前会话里上传聊天附件。</li>
+        <li>再点击输入框左侧“类案检索”按钮。</li>
+        <li>你可以直接发送，也可以补一句要求，例如“优先找物业费拖欠和违约金争议的案件”。</li>
+        <li>系统会返回：
+          <ul>
+            <li>是否命中同案</li>
+            <li>高度相似候选</li>
+            <li>普通相似案例</li>
+            <li>每个结果的原因、分数和引用片段</li>
+          </ul>
+        </li>
+      </ol>
+      <div class="warn">
+        <strong>这里最重要的一句：</strong>
+        一定要先上传文件，再在同一个会话里使用“类案检索”。如果当前会话没有聊天附件，这个功能就没有材料可以比对。
+      </div>
+
+      <h2>4. 文件到底要传到哪里</h2>
+      <table class="k-table">
+        <thead>
+          <tr>
+            <th>你要做的事</th>
+            <th>文件应该传到哪里</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>普通聊天时，让回答参考你的材料</td>
+            <td>上传到当前会话附件</td>
+          </tr>
+          <tr>
+            <td>做类案检索</td>
+            <td>上传到当前会话附件</td>
+          </tr>
+          <tr>
+            <td>做合同审查的标准参照</td>
+            <td>上传到左侧“合同审查”里的标准模板库</td>
+          </tr>
+          <tr>
+            <td>上传待审合同</td>
+            <td>在聊天区进入合同审查模式后，用回形针上传</td>
+          </tr>
+          <tr>
+            <td>做观点预测</td>
+            <td>上传到左侧“观点预测”里的案件模板</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>5. 右侧栏怎么用</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>附件</h3>
+          <p>这里能看到当前会话里已经上传过哪些文件。类案检索时，系统主要就是用这里的文件来比对。</p>
+        </div>
+        <div class="card">
+          <h3>引用来源</h3>
+          <p>这里能看到系统回答时具体引用了哪个文件、哪一段。适合用来核对系统有没有“胡说”。</p>
+        </div>
+      </div>
+
+      <h2>6. 常见问题</h2>
+      <div class="card">
+        <h3>为什么我上传了文件，但回答里没用上？</h3>
+        <p>先确认你是不是上传到了“当前会话附件”，而不是传到了模板库或别的功能面板。</p>
+
+        <h3>为什么合同审查没开始？</h3>
+        <p>通常是因为没有标准模板，或者没有上传待审合同。</p>
+
+        <h3>为什么观点预测没有结果？</h3>
+        <p>通常是因为还没有先建立案件模板，或者没选模板就直接问了问题。</p>
+
+        <h3>为什么类案检索结果很少？</h3>
+        <p>可能是当前会话没有附件，也可能是你的补充要求太窄。可以先上传更完整的材料，再把问题写得具体但不要过窄。</p>
+
+        <h3>我看不懂“同案命中 / 高度相似 / 类案”有什么区别。</h3>
+        <p>
+          简单理解：
+          “同案命中”最接近原文；
+          “高度相似”大概率是非常近的版本或非常接近的案件；
+          “类案”则是争议点、事实结构或法律关系相近，但不一定是同一个案子。
+        </p>
+      </div>
+
+      <h2>7. 推荐的使用顺序</h2>
+      <ol>
+        <li>先看“系统状态”，确认服务正常。</li>
+        <li>普通检索或类案检索前，先把材料传到当前会话附件。</li>
+        <li>合同审查前，先建好标准模板。</li>
+        <li>观点预测前，先建好案件模板。</li>
+        <li>结果出来后，养成查看“引用来源”的习惯。</li>
+      </ol>
+
+      <div class="footer">
+        本指南基于项目当前界面和功能编写，适合日常业务人员、法务、律师助理或首次接触系统的使用者。
+      </div>
+    </main>
+  </body>
+</html>
