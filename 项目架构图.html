@@ -76,7 +76,7 @@ h1 {
 <body>
 
 <h1>法律文书相似检索与证据溯源系统</h1>
-<p class="subtitle">Legal Similarity Evidence Search - 系统架构与新增功能流程图</p>
+<p class="subtitle">Legal Similarity Evidence Search - 系统架构与核心链路流程图（含合同审查 / 观点预测 / 独立类案检索）</p>
 
 <div class="diagram-container">
 <h2>一、系统总览</h2>
@@ -91,24 +91,30 @@ graph TB
         Chat["聊天与检索"]
         Attachments["会话附件 / 右侧预览"]
         ReviewMode["合同审查模式"]
-        FileManager["文件管理 / 模板管理"]
+        PredictionMode["观点预测模式"]
+        SimilarCaseMode["类案检索模式"]
+        FileManager["文件管理 / 模板管理（标准模板+案件模板）"]
         StatusPanel["系统状态面板"]
     end
 
     subgraph BACKEND["⚙️ 后端 (FastAPI + Python)"]
-        API["FastAPI 路由层<br/>/api/search /api/chat<br/>/api/session-files /api/contract-review<br/>/api/documents /api/templates /api/health"]
+        API["FastAPI 路由层<br/>/api/search /api/chat /api/chat/stream<br/>/api/similar-cases/compare<br/>/api/contract-review/* /api/session-files/*<br/>/api/documents /api/templates<br/>/api/prediction/* /api/opponent-prediction/start<br/>/api/health /api/bootstrap"]
         SessionFiles["会话临时文件服务<br/>session_temp_file_store"]
         Indexer["入库服务<br/>parser → embed → store"]
         Retrieval["检索服务<br/>query → recall → rerank → validate"]
         AttachmentFocus["附件聚焦服务<br/>切块 → 打分 → Top N"]
         ChatSvc["对话服务<br/>attachment focus → retrieve → DeepSeek"]
         ReviewSvc["合同审查服务<br/>template match → stream review"]
+        SimilarCaseSvc["类案检索服务<br/>独立链路 /similar-cases/compare"]
+        PredictionTemplateSvc["观点预测模板服务<br/>/prediction/templates*"]
+        OpponentPredictionSvc["观点预测服务<br/>/opponent-prediction/start"]
         Embedding["Embedding 服务<br/>Gemini / 本地 BGE-M3"]
         Reranker["Reranker 服务<br/>BGE-Reranker-V2-M3"]
     end
 
     subgraph STORAGE["🗄️ 数据层"]
         PG["💾 PostgreSQL<br/>documents / paragraphs"]
+        PGPRED["💾 PostgreSQL 预测表<br/>prediction_templates / prediction_template_assets<br/>prediction_template_asset_paragraphs / prediction_report_snapshots"]
         QD["📳 Qdrant<br/>文档向量 + 段落向量"]
         TEMP["🧷 Session Temp Files<br/>仅会话临时文件"]
     end
@@ -119,17 +125,22 @@ graph TB
     end
 
     Browser --> UI
-    UI --> Chat & Attachments & ReviewMode & FileManager & StatusPanel
-    Chat & Attachments & ReviewMode & FileManager & StatusPanel -->|HTTP REST| API
-    API --> SessionFiles & Indexer & Retrieval & AttachmentFocus & ChatSvc & ReviewSvc
+    UI --> Chat & Attachments & ReviewMode & PredictionMode & SimilarCaseMode & FileManager & StatusPanel
+    Chat & Attachments & ReviewMode & PredictionMode & SimilarCaseMode & FileManager & StatusPanel -->|HTTP REST| API
+    API --> SessionFiles & Indexer & Retrieval & AttachmentFocus & ChatSvc & ReviewSvc & SimilarCaseSvc & PredictionTemplateSvc & OpponentPredictionSvc
     SessionFiles --> TEMP
     Indexer --> Embedding
     Retrieval --> Embedding & Reranker
     AttachmentFocus --> Embedding
     ChatSvc --> AttachmentFocus & Retrieval & DeepSeek
-    ReviewSvc --> SessionFiles & DeepSeek
+    ReviewSvc --> SessionFiles & Retrieval & DeepSeek
+    SimilarCaseSvc --> SessionFiles & Retrieval & Embedding
+    PredictionTemplateSvc --> Embedding
+    OpponentPredictionSvc --> PredictionTemplateSvc & Retrieval & DeepSeek
     Embedding -->|API 调用| GoogleAPI
     Indexer --> PG & QD
+    PredictionTemplateSvc --> PGPRED
+    OpponentPredictionSvc --> PGPRED
     Retrieval --> QD & PG
 </pre>
 </div>
@@ -178,7 +189,7 @@ graph TD
 
 <div class="diagram-container">
 <h2>四、对话流程 (Grounded Chat)</h2>
-<p class="diagram-note">普通问答与“上传案件找相似案例”共用同一条聊天链路。差别在于是否先执行附件聚焦选择。</p>
+<p class="diagram-note">这里是普通聊天链路。类案检索现在走独立接口 <code>/api/similar-cases/compare</code>，不再复用聊天接口。</p>
 <pre class="mermaid">
 graph TD
     Q["💬 用户提问"] --> ATT{"本轮是否启用 chat_attachment?"}
@@ -187,12 +198,12 @@ graph TD
     FOCUS --> RET2["🔍 检索证据<br/>整体摘要 + 重点段 + 用户问题"]
     RET -->|"有证据"| CTX["🧱 构建上下文<br/>拼接命中证据"]
     RET -->|"无证据"| FB["🤖 DeepSeek 直接回答<br/>non-grounded 模式"]
-    RET2 -->|"有证据"| CTX2["🧱 构建上下文<br/>原案件摘要 + 重点段 + 命中证据"]
-    RET2 -->|"无证据"| FB2["🤖 DeepSeek 说明<br/>当前知识库未命中可靠类案"]
+    RET2 -->|"有证据"| CTX2["🧱 构建上下文<br/>附件重点段 + 命中证据"]
+    RET2 -->|"无证据"| FB2["🤖 DeepSeek 说明<br/>当前知识库未命中可靠证据"]
     CTX --> GEN["🤖 DeepSeek 生成 grounded 回答"]
-    CTX2 --> GEN2["🤖 DeepSeek 解释<br/>原案件与候选案例相似点"]
+    CTX2 --> GEN2["🤖 DeepSeek 生成 grounded 回答<br/>并强调附件相关性"]
     GEN --> CIT["📸 引用标注<br/>溯源到具体文档行号"]
-    GEN2 --> CIT2["📸 引用标注<br/>保留命中案例证据来源"]
+    GEN2 --> CIT2["📸 引用标注<br/>保留命中证据来源"]
     CIT --> RES["📋 返回回答 + 引用"]
     CIT2 --> RES
     FB2 --> RES
@@ -212,7 +223,14 @@ graph LR
     subgraph PG["💾 PostgreSQL (5432)"]
         DT["documents 表<br/>doc_id / file_name / source_path<br/>version_id / normalized_content"]
         PT["paragraphs 表<br/>para_id / doc_id / line_start / line_end<br/>content / dispute_tags"]
+        PPT["prediction_templates 表<br/>template_id / case_name / session_id"]
+        PPA["prediction_template_assets 表<br/>asset_id / template_id / asset_kind"]
+        PPP["prediction_template_asset_paragraphs 表<br/>asset_id / para_id / line_start / line_end"]
+        PRS["prediction_report_snapshots 表<br/>report_id / template_id / session_id"]
         DT ||--o{ PT
+        PPT ||--o{ PPA
+        PPA ||--o{ PPP
+        PPT ||--o{ PRS
     end
 
     subgraph QD["📳 Qdrant (6333)"]
@@ -222,7 +240,7 @@ graph LR
     end
 
     subgraph TEMP["🧷 Session Temp Files"]
-        TF["session_temp_file_store<br/>chat_attachment / review_target<br/>content / content_preview"]
+        TF["session_temp_file_store<br/>chat_attachment / review_target<br/>content / content_preview / file_name"]
     end
 </pre>
 </div>
@@ -287,33 +305,28 @@ graph TD
 </div>
 
 <div class="diagram-container">
-<h2>八、上传案件驱动类案检索流程</h2>
-<p class="diagram-note">这条图对应“上传一个案件文件后，让系统先理解文件重点，再找数据库里最相似的案例”。</p>
+<h2>八、独立类案检索流程</h2>
+<p class="diagram-note">这条图对应独立类案检索接口 <code>/api/similar-cases/compare</code>，不再走聊天接口。</p>
 <pre class="mermaid">
 graph TD
-    Q["💬 用户提问<br/>找与我上传案件类似的案件"] --> REQ["🖥️ 前端 executeSearch<br/>POST /api/chat/stream<br/>session_id + use_chat_attachment=true"]
-    REQ --> RESOLVE["📂 chat.py::_build_attachment_query_input<br/>读取最新 chat_attachment"]
-    RESOLVE --> FOCUS["🎯 attachment_focus.py::select_attachment_focus"]
+    U["👤 用户上传聊天附件并切到类案检索模式"] --> FE["🖥️ 前端 executeSimilarCaseSearch<br/>POST /api/similar-cases/compare"]
+    FE --> LOAD["📂 similar_case_search._load_uploaded_materials<br/>读取 session 的 chat_attachment"]
+    LOAD --> PARSE["🧩 parse_document<br/>规范化 + 段落切分 + 争议标签"]
+    PARSE --> PROFILE["🧭 抽取案件检索画像<br/>法律关系 / 争议焦点 / 标的 / 主体 / 时间 / 金额 / 关键事实"]
+    PROFILE --> QBUILD["🧪 构建 comparison_query<br/>画像字段 + 用户检索要求"]
+    QBUILD --> RET["🔍 dual_retrieve + rank_and_aggregate<br/>文档召回 + 段落召回 + 重排"]
+    RET --> SCORE["📐 综合评分<br/>doc向量 + 段落分 + 文本重合 + 画像命中 + 文件名 bonus"]
+    SCORE --> CLASSIFY["🧷 结果分类<br/>exact_duplicate / near_duplicate / similar_case"]
+    CLASSIFY --> RES["📋 返回结构化结果<br/>case_search_profile + matches + citations"]
 
-    FOCUS --> PARSE["🧩 parse_document<br/>全文规范化 + 段落切分"]
-    PARSE --> CAND["📑 构造候选块<br/>单段落 + 双段窗口"]
-    CAND --> SCORE["📐 用用户问题打分<br/>encode_query(query)<br/>encode_texts(chunks)<br/>语义相似度 + 关键词 bonus"]
-    SCORE --> TOPN["🏆 选 Top N 重点段<br/>区间重叠去重"]
-    TOPN --> OVERVIEW["🗒️ 生成文件整体摘要"]
-    OVERVIEW --> QUERYTEXT["🧪 组装检索输入<br/>整体摘要 + 重点段 + 用户问题"]
-    QUERYTEXT --> RET["🔍 复用原检索链路<br/>understand_query → embedding → dual_retrieve → rerank"]
-    RET --> HIT["📚 命中数据库案例证据"]
-    HIT --> LLM["🤖 DeepSeek<br/>基于原案件重点段 + 命中案例证据解释相似点"]
-    LLM --> UI["🖥️ 主聊天框返回<br/>相似案例 + 相似原因 + 引用"]
+    TEMPONLY["⚠️ 不污染正式库<br/>上传附件仅存 session_temp_file_store<br/>不写入 documents / paragraphs"]
+    LOAD -.-> TEMPONLY
 
-    TEMPONLY["⚠️ 不污染数据库<br/>附件切块与打分仅在请求期进行<br/>不写入 PostgreSQL / Qdrant 正式案例库"]
-    FOCUS -.-> TEMPONLY
-
-    style Q fill:#4f46e5,color:#fff
-    style FOCUS fill:#059669,color:#fff
+    style U fill:#4f46e5,color:#fff
+    style PROFILE fill:#059669,color:#fff
     style SCORE fill:#dc2626,color:#fff
     style RET fill:#d97706,color:#fff
-    style LLM fill:#7c3aed,color:#fff
+    style RES fill:#059669,color:#fff
     style TEMPONLY fill:#3b82f6,color:#fff
 </pre>
 </div>
@@ -339,6 +352,34 @@ graph TD
     style STREAMREQ fill:#d97706,color:#fff
     style DS fill:#7c3aed,color:#fff
     style OUT fill:#059669,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>十、观点预测链路（模板管理 + 预测执行）</h2>
+<p class="diagram-note">观点预测是独立链路：先维护案件模板，再按用户问题启动预测，不复用合同审查模板和普通类案接口。</p>
+<pre class="mermaid">
+graph TD
+    U["👤 用户在观点预测面板维护案件模板"] --> TM["📡 /api/prediction/templates*<br/>创建 / 查询 / 删除 / 追加资产"]
+    TM --> EX["🔌 文本提取与解析<br/>案情材料(必填) + 对方语料(选填)"]
+    EX --> PT["💾 写入 prediction_* 表<br/>templates / assets / asset_paragraphs"]
+
+    Q["💬 用户在聊天区提问<br/>例如：对方会从什么角度辩驳?"] --> START["📡 POST /api/opponent-prediction/start<br/>session_id + template_id + query"]
+    START --> PROFILE["🧭 build_case_profile<br/>规则候选 + LLM 重构案件画像"]
+    PROFILE --> RET["🔍 对方视角检索<br/>基于画像与问题生成检索方向"]
+    RET --> ARG["🧠 观点生成与重排<br/>主打 / 次打 / 补充 + 引用支持项"]
+    ARG --> COUNTER["🛡️ 我方应对建议生成<br/>并区分推断项与证据项"]
+    COUNTER --> SNAP["💾 保存预测快照<br/>prediction_report_snapshots"]
+    SNAP --> UI["🖥️ 返回预测报告卡片<br/>标题 / 摘要 / 观点 / 引用"]
+
+    style U fill:#4f46e5,color:#fff
+    style TM fill:#059669,color:#fff
+    style PT fill:#3b82f6,color:#fff
+    style START fill:#d97706,color:#fff
+    style PROFILE fill:#dc2626,color:#fff
+    style ARG fill:#dc2626,color:#fff
+    style COUNTER fill:#7c3aed,color:#fff
+    style UI fill:#059669,color:#fff
 </pre>
 </div>
 
