@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import run_bootstrap, SERVER_HOST, SERVER_PORT
 from app.core.database import init_db
+from app.routers.prediction import router as prediction_router
 from app.routers.search import router as search_router
 from app.services.session_files import session_temp_file_store
 
@@ -85,6 +86,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(search_router)
+app.include_router(prediction_router)
 
 
 if __name__ == "__main__":

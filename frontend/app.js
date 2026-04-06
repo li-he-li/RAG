@@ -1,6 +1,40 @@
-﻿const API_BASE = "http://localhost:8000/api";
+﻿function resolveApiBase() {
+  try {
+    const override = localStorage.getItem("apiBaseOverride");
+    if (typeof override === "string" && override.trim()) {
+      return override.trim().replace(/\/+$/, "");
+    }
+  } catch {
+    // ignore storage access errors and fall back to location-derived API base
+  }
+
+  if (window.location.protocol === "file:") {
+    return "http://localhost:8000/api";
+  }
+
+  const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+  const host = window.location.hostname || "localhost";
+  const port = window.location.port || "";
+
+  // Standalone static frontend mode: serve the page from any host/port, but keep
+  // the FastAPI backend on the same host at :8000.
+  if (port && port !== "80" && port !== "443" && port !== "8000") {
+    return `${protocol}//${host}:8000/api`;
+  }
+
+  // Reverse-proxy/single-domain mode: API is served from the current origin.
+  // This also keeps localhost/127.0.0.1 working when the page is hosted on :8000.
+  if (window.location.origin && window.location.origin !== "null") {
+    return `${window.location.origin.replace(/\/+$/, "")}/api`;
+  }
+
+  return `${protocol}//${host}:8000/api`;
+}
+
+const API_BASE = resolveApiBase();
 const SESSION_STORAGE_KEY = "chatSessionsV2";
 const ACTIVE_SESSION_KEY = "activeChatSessionIdV2";
+const PREDICTION_TEMPLATE_STORAGE_KEY = "predictionTemplatesV1";
 const MAX_SESSIONS = 30;
 const MAX_MESSAGES_PER_SESSION = 120;
 const SIDEBAR_BREAKPOINT = 900;
@@ -13,6 +47,7 @@ const welcomePanel = document.getElementById("welcomePanel");
 const chat = document.getElementById("chat");
 const panelFiles = document.getElementById("panelFiles");
 const panelContractReview = document.getElementById("panelContractReview");
+const panelOpponentPrediction = document.getElementById("panelOpponentPrediction");
 const panelStatus = document.getElementById("panelStatus");
 const citationSidebar = document.getElementById("citationSidebar");
 const citationSidebarBody = document.getElementById("citationSidebarBody");
@@ -29,10 +64,12 @@ const reviewContractInput = document.getElementById("reviewContractInput");
 const chatAttachmentTray = document.getElementById("chatAttachmentTray");
 const rightSidebarAttachmentsBody = document.getElementById("rightSidebarAttachmentsBody");
 const contractReviewModeToggle = document.getElementById("contractReviewModeToggle");
+const opponentPredictionModeToggle = document.getElementById("opponentPredictionModeToggle");
 const historyList = document.getElementById("historyList");
 
 const menuFiles = document.getElementById("menuFiles");
 const menuContractReview = document.getElementById("menuContractReview");
+const menuOpponentPrediction = document.getElementById("menuOpponentPrediction");
 const menuStatus = document.getElementById("menuStatus");
 const uploadArea = document.getElementById("uploadArea");
 const fileFeedback = document.getElementById("fileFeedback");
@@ -41,6 +78,18 @@ const templateFileInput = document.getElementById("templateFileInput");
 const templateFeedback = document.getElementById("templateFeedback");
 const templateList = document.getElementById("templateList");
 const templateListCount = document.getElementById("templateListCount");
+const predictionCaseNameInput = document.getElementById("predictionCaseNameInput");
+const predictionOpponentCorpusArea = document.getElementById("predictionOpponentCorpusArea");
+const predictionOpponentCorpusInput = document.getElementById("predictionOpponentCorpusInput");
+const predictionOpponentCorpusFiles = document.getElementById("predictionOpponentCorpusFiles");
+const predictionCaseMaterialArea = document.getElementById("predictionCaseMaterialArea");
+const predictionCaseMaterialInput = document.getElementById("predictionCaseMaterialInput");
+const predictionCaseMaterialFiles = document.getElementById("predictionCaseMaterialFiles");
+const predictionTemplateSaveBtn = document.getElementById("predictionTemplateSaveBtn");
+const predictionTemplateActionHint = document.getElementById("predictionTemplateActionHint");
+const predictionTemplateFeedback = document.getElementById("predictionTemplateFeedback");
+const predictionTemplateList = document.getElementById("predictionTemplateList");
+const predictionTemplateListCount = document.getElementById("predictionTemplateListCount");
 
 const CITATION_SIDEBAR_MIN_WIDTH = 280;
 const CITATION_SIDEBAR_DEFAULT_WIDTH = 360;
@@ -60,6 +109,320 @@ const promotedChatAttachmentIdsBySession = new Map();
 const warnedMissingReviewFilesBySession = new Set();
 const reviewFileSyncPromisesBySession = new Map();
 const reviewSelectionLocksBySession = new Set();
+let predictionTemplates = loadPredictionTemplates();
+let pendingPredictionOpponentCorpusFiles = [];
+let pendingPredictionCaseMaterialFiles = [];
+
+function parseApiTimestamp(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function normalizePredictionTemplateAsset(asset) {
+  if (!asset || typeof asset !== "object") return null;
+  const id =
+    typeof asset.asset_id === "string" && asset.asset_id.trim()
+      ? asset.asset_id.trim()
+      : typeof asset.id === "string" && asset.id.trim()
+        ? asset.id.trim()
+        : null;
+  const name =
+    typeof asset.file_name === "string" && asset.file_name.trim()
+      ? asset.file_name.trim()
+      : typeof asset.name === "string" && asset.name.trim()
+        ? asset.name.trim()
+        : null;
+  if (!id || !name) return null;
+
+  return {
+    id,
+    name,
+    size:
+      Number.isFinite(asset.size_bytes) && asset.size_bytes >= 0
+        ? asset.size_bytes
+        : Number.isFinite(asset.size)
+          ? asset.size
+          : 0,
+    type:
+      typeof asset.mime_type === "string"
+        ? asset.mime_type
+        : typeof asset.type === "string"
+          ? asset.type
+          : "",
+    lastModified: parseApiTimestamp(asset.updated_at ?? asset.updatedAt ?? asset.created_at ?? asset.createdAt),
+    contentPreview:
+      typeof asset.content_preview === "string"
+        ? asset.content_preview
+        : typeof asset.contentPreview === "string"
+          ? asset.contentPreview
+          : "",
+    assetKind:
+      typeof asset.asset_kind === "string" && asset.asset_kind.trim()
+        ? asset.asset_kind.trim()
+        : typeof asset.assetKind === "string" && asset.assetKind.trim()
+          ? asset.assetKind.trim()
+          : "",
+  };
+}
+
+function getPredictionCaseMaterialCount(template) {
+  if (!template || typeof template !== "object") return 0;
+  if (Number.isFinite(template.caseMaterialCount)) return template.caseMaterialCount;
+  return Array.isArray(template.caseMaterials) ? template.caseMaterials.length : 0;
+}
+
+function getPredictionOpponentCorpusCount(template) {
+  if (!template || typeof template !== "object") return 0;
+  if (Number.isFinite(template.opponentCorpusCount)) return template.opponentCorpusCount;
+  return Array.isArray(template.opponentCorpus) ? template.opponentCorpus.length : 0;
+}
+
+function normalizeComposerMode(mode) {
+  if (mode === "contract-review" || mode === "opponent-prediction") {
+    return mode;
+  }
+  return "chat";
+}
+
+function normalizePredictionTemplateFileMeta(file) {
+  if (!file || typeof file !== "object") return null;
+  const name = typeof file.name === "string" && file.name.trim() ? file.name.trim() : null;
+  if (!name) return null;
+
+  return {
+    id:
+      typeof file.id === "string" && file.id.trim()
+        ? file.id.trim()
+        : `pf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    size: Number.isFinite(file.size) ? file.size : 0,
+    type: typeof file.type === "string" ? file.type : "",
+    lastModified: Number.isFinite(file.lastModified) ? file.lastModified : Date.now(),
+  };
+}
+
+function normalizePredictionTemplate(template) {
+  if (!template || typeof template !== "object") return null;
+  const id =
+    typeof template.id === "string" && template.id.trim()
+      ? template.id.trim()
+      : typeof template.template_id === "string" && template.template_id.trim()
+        ? template.template_id.trim()
+        : null;
+  const caseName =
+    typeof template.caseName === "string" && template.caseName.trim()
+      ? template.caseName.trim()
+      : typeof template.case_name === "string" && template.case_name.trim()
+        ? template.case_name.trim()
+        : null;
+
+  if (!id || !caseName) return null;
+
+  let caseMaterials = Array.isArray(template.caseMaterials)
+    ? template.caseMaterials.map(normalizePredictionTemplateAsset).filter(Boolean)
+    : [];
+  let opponentCorpus = Array.isArray(template.opponentCorpus)
+    ? template.opponentCorpus.map(normalizePredictionTemplateAsset).filter(Boolean)
+    : [];
+
+  if (Array.isArray(template.assets)) {
+    const assets = template.assets.map(normalizePredictionTemplateAsset).filter(Boolean);
+    caseMaterials = assets.filter((asset) => asset.assetKind === "case_material");
+    opponentCorpus = assets.filter((asset) => asset.assetKind === "opponent_corpus");
+  }
+
+  const caseMaterialCount =
+    Number.isFinite(template.caseMaterialCount) && template.caseMaterialCount >= 0
+      ? template.caseMaterialCount
+      : Number.isFinite(template.case_material_count) && template.case_material_count >= 0
+        ? template.case_material_count
+        : caseMaterials.length;
+  const opponentCorpusCount =
+    Number.isFinite(template.opponentCorpusCount) && template.opponentCorpusCount >= 0
+      ? template.opponentCorpusCount
+      : Number.isFinite(template.opponent_corpus_count) && template.opponent_corpus_count >= 0
+        ? template.opponent_corpus_count
+        : opponentCorpus.length;
+
+  if (caseMaterialCount === 0 && caseMaterials.length === 0) return null;
+
+  return {
+    id,
+    caseName,
+    caseMaterials,
+    opponentCorpus,
+    caseMaterialCount,
+    opponentCorpusCount,
+    createdAt: parseApiTimestamp(template.createdAt ?? template.created_at),
+    updatedAt: parseApiTimestamp(template.updatedAt ?? template.updated_at),
+  };
+}
+
+function loadPredictionTemplates() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PREDICTION_TEMPLATE_STORAGE_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizePredictionTemplate).filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch {
+    return [];
+  }
+}
+
+function persistPredictionTemplates() {
+  predictionTemplates = predictionTemplates
+    .map(normalizePredictionTemplate)
+    .filter(Boolean)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  localStorage.setItem(PREDICTION_TEMPLATE_STORAGE_KEY, JSON.stringify(predictionTemplates));
+}
+
+async function loadPredictionTemplatesRemote(options = {}) {
+  const { silent = false } = options;
+  const response = await fetch(`${API_BASE}/prediction/templates`);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `加载案件模板失败 (${response.status})`);
+  }
+
+  const payload = await response.json();
+  predictionTemplates = Array.isArray(payload)
+    ? payload.map(normalizePredictionTemplate).filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt)
+    : [];
+  persistPredictionTemplates();
+  renderPredictionTemplateList();
+
+  if (!silent) {
+    showPredictionTemplateFeedback(
+      predictionTemplates.length > 0 ? `已同步 ${predictionTemplates.length} 个案件模板` : "当前暂无案件模板",
+      "info",
+      2200
+    );
+  }
+  return predictionTemplates;
+}
+
+async function savePredictionTemplateRemote() {
+  const caseName = typeof predictionCaseNameInput?.value === "string" ? predictionCaseNameInput.value.trim() : "";
+  if (!caseName) {
+    showPredictionTemplateFeedback("保存失败：案件名称必填。", "error", 5000);
+    syncPredictionTemplateFormState();
+    return false;
+  }
+  if (pendingPredictionCaseMaterialFiles.length === 0) {
+    showPredictionTemplateFeedback("保存失败：请至少选择一份案情材料。", "error", 5000);
+    syncPredictionTemplateFormState();
+    return false;
+  }
+
+  const formData = new FormData();
+  formData.append("case_name", caseName);
+  const activeSession = getActiveSession();
+  if (activeSession?.id) {
+    formData.append("session_id", activeSession.id);
+  }
+  pendingPredictionCaseMaterialFiles.forEach((file) => {
+    formData.append("case_materials", file);
+  });
+  pendingPredictionOpponentCorpusFiles.forEach((file) => {
+    formData.append("opponent_corpus", file);
+  });
+
+  if (predictionTemplateSaveBtn) {
+    predictionTemplateSaveBtn.disabled = true;
+  }
+  showPredictionTemplateFeedback("正在保存案件模板...", "info", 0);
+
+  try {
+    const response = await fetch(`${API_BASE}/prediction/templates`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `保存失败 (${response.status})`);
+    }
+    const detail = normalizePredictionTemplate(await response.json());
+    if (detail) {
+      predictionTemplates = [detail, ...predictionTemplates.filter((template) => template.id !== detail.id)];
+      persistPredictionTemplates();
+      renderPredictionTemplateList();
+    } else {
+      await loadPredictionTemplatesRemote({ silent: true });
+    }
+    clearPredictionTemplateForm();
+    showPredictionTemplateFeedback(`已保存案件模板：${caseName}`, "success", 3200);
+    return true;
+  } catch (err) {
+    showPredictionTemplateFeedback(`保存失败：${err.message || err}`, "error", 6000);
+    return false;
+  } finally {
+    syncPredictionTemplateFormState();
+  }
+}
+
+async function deletePredictionTemplateRemote(templateId) {
+  const target = predictionTemplates.find((template) => template.id === templateId);
+  if (!target) {
+    showPredictionTemplateFeedback("删除失败：未找到对应案件模板。", "error", 5000);
+    return false;
+  }
+
+  const shouldDelete = window.confirm(`确认删除案件模板“${target.caseName}”？该操作会删除后端中的对应模板。`);
+  if (!shouldDelete) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/prediction/templates/${encodeURIComponent(templateId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `删除失败 (${response.status})`);
+    }
+
+    predictionTemplates = predictionTemplates.filter((template) => template.id !== templateId);
+    persistPredictionTemplates();
+    let activeSessionNeedsRefresh = false;
+    chatSessions.forEach((session) => {
+      if (!session) return;
+      const wasSelected = session.predictionSelectedTemplateId === templateId;
+      session.predictionTemplateCandidates = Array.isArray(session.predictionTemplateCandidates)
+        ? session.predictionTemplateCandidates.filter((template) => template?.id !== templateId)
+        : [];
+      if (wasSelected) {
+        session.predictionSelectedTemplateId = null;
+        removeLatestPredictionTemplateMatchMessage(session);
+        queuePredictionSelectionInvalidatedMessages(session, target);
+        if (session.id === activeSessionId) {
+          activeSessionNeedsRefresh = true;
+        }
+      }
+    });
+    persistSessions();
+    renderPredictionTemplateList();
+    showPredictionTemplateFeedback(`已删除案件模板：${target.caseName}`, "success", 2600);
+    if (activeSessionNeedsRefresh) {
+      const current = getActiveSession();
+      if (current) {
+        renderSessionMessages(current);
+      }
+    }
+    return true;
+  } catch (err) {
+    showPredictionTemplateFeedback(`删除失败：${err.message || err}`, "error", 6000);
+    return false;
+  }
+}
+
+function getSelectedPredictionTemplateId(session) {
+  const rawId = session?.predictionSelectedTemplateId;
+  return typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
+}
 
 function normalizeChatAttachment(attachment) {
   if (!attachment || typeof attachment !== "object") return null;
@@ -387,6 +750,160 @@ function buildReviewTemplateMessageHtml(answer, templateMatch) {
   return `<div class="answer-title">模板匹配</div><p>${nl2br(answer || "")}</p>${actions}`;
 }
 
+function buildPredictionTemplateMatchSummary(session) {
+  const selectedTemplateId = getSelectedPredictionTemplateId(session);
+  const candidates = Array.isArray(session?.predictionTemplateCandidates)
+    ? session.predictionTemplateCandidates.map(normalizePredictionTemplate).filter(Boolean)
+    : [];
+  const currentTemplate = selectedTemplateId ? candidates.find((template) => template.id === selectedTemplateId) : null;
+  const query =
+    typeof session?.lastPredictionQuery === "string" && session.lastPredictionQuery.trim()
+      ? session.lastPredictionQuery.trim()
+      : "";
+
+  if (candidates.length === 0) {
+    return "当前无可用案件模板。请先到左侧观点预测页创建案件模板。";
+  }
+
+  const listPreview = candidates
+    .slice(0, 4)
+    .map((template, index) => {
+      const materialCount = getPredictionCaseMaterialCount(template);
+      const corpusCount = getPredictionOpponentCorpusCount(template);
+      return `${index + 1}. ${template.caseName}（案情材料 ${materialCount}，对方语料 ${corpusCount}）`;
+    })
+    .join("\n");
+
+  return [
+    query ? `已收到你的观点预测问题：${query}` : "已收到你的观点预测请求。",
+    currentTemplate
+      ? `当前将基于《${currentTemplate.caseName}》进入后续预测流程。`
+      : "请先在下方选择一个案件模板，再开始后续观点预测流程。",
+    listPreview ? `可选案件模板：\n${listPreview}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildPredictionTemplateMessageHtml(answer, templateMatch) {
+  const selectedTemplateId =
+    typeof templateMatch?.selectedTemplateId === "string" && templateMatch.selectedTemplateId.trim()
+      ? templateMatch.selectedTemplateId
+      : null;
+  const query =
+    typeof templateMatch?.query === "string" && templateMatch.query.trim()
+      ? templateMatch.query.trim()
+      : "";
+  const candidates = Array.isArray(templateMatch?.candidates)
+    ? templateMatch.candidates.map(normalizePredictionTemplate).filter(Boolean)
+    : [];
+
+  const actions =
+    query && candidates.length > 0
+      ? `
+        <div class="prediction-match-actions">
+          ${candidates
+            .map((template) => {
+              const isSelected = template.id === selectedTemplateId;
+              const materialCount = getPredictionCaseMaterialCount(template);
+              const corpusCount = getPredictionOpponentCorpusCount(template);
+              return `
+                <button
+                  class="prediction-match-option ${isSelected ? "selected" : ""}"
+                  type="button"
+                  data-prediction-template-select="${escapeHtml(template.id)}"
+                  data-prediction-query="${escapeHtml(encodeURIComponent(query))}"
+                >
+                  <span class="prediction-match-option-name">${escapeHtml(template.caseName)}</span>
+                  <span class="prediction-match-option-meta">案情材料 ${materialCount} 份 · 对方语料 ${corpusCount} 份</span>
+                  ${isSelected ? `<span class="prediction-match-option-tag">当前</span>` : ""}
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `
+      : "";
+
+  return `<div class="answer-title">案件选择</div><p>${nl2br(answer || "")}</p>${actions}`;
+}
+
+function appendPredictionTemplateMatchResponse(session, query, save = true) {
+  const answer = buildPredictionTemplateMatchSummary(session);
+  const templateMatch = {
+    query,
+    selectedTemplateId: getSelectedPredictionTemplateId(session),
+    candidates: Array.isArray(session?.predictionTemplateCandidates)
+      ? session.predictionTemplateCandidates.map(normalizePredictionTemplate).filter(Boolean)
+      : [],
+  };
+
+  appendMessage("", buildPredictionTemplateMessageHtml(answer, templateMatch));
+
+  if (save) {
+    pushMessageToActive({ type: "assistant", answer, citations: [], predictionTemplateMatch: templateMatch });
+  }
+}
+
+async function executePredictionPlaceholder(session, query, options = {}) {
+  const { appendUser = true } = options;
+  const selectedTemplateId = getSelectedPredictionTemplateId(session);
+  const selectedTemplate = Array.isArray(session?.predictionTemplateCandidates)
+    ? session.predictionTemplateCandidates
+        .map(normalizePredictionTemplate)
+        .filter(Boolean)
+        .find((template) => template.id === selectedTemplateId)
+    : null;
+
+  if (!query) {
+    appendErrorMessage("观点预测未启动：请输入你想分析的问题。", true);
+    return false;
+  }
+
+  if (!selectedTemplate) {
+    appendErrorMessage("观点预测未启动：请先在主聊天区选择一个案件模板。", true);
+    return false;
+  }
+
+  showChat();
+  if (appendUser) {
+    appendUserMessage(query, true);
+  }
+  const loadingNode = appendLoadingMessage("观点预测中");
+  try {
+    const response = await fetch(`${API_BASE}/opponent-prediction/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: session.id,
+        template_id: selectedTemplate.id,
+        query,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `请求失败 (${response.status})`);
+    }
+
+    const report = normalizePredictionReportResponse(await response.json());
+    if (loadingNode?.isConnected) {
+      loadingNode.remove();
+    }
+    if (!report) {
+      throw new Error("观点预测结果格式不正确");
+    }
+    appendPredictionReportResponse(report, true);
+    return true;
+  } catch (err) {
+    if (loadingNode?.isConnected) {
+      loadingNode.remove();
+    }
+    appendErrorMessage(`观点预测失败：${err.message || err}`, true);
+    return false;
+  }
+}
+
 function removeLatestTemplateMatchMessage(session) {
   if (!session || !Array.isArray(session.messages)) return;
 
@@ -396,6 +913,51 @@ function removeLatestTemplateMatchMessage(session) {
     session.messages.splice(index, 1);
     return;
   }
+}
+
+function removeLatestPredictionTemplateMatchMessage(session) {
+  if (!session || !Array.isArray(session.messages)) return;
+
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const message = session.messages[index];
+    if (message?.type !== "assistant" || !message.predictionTemplateMatch) continue;
+    session.messages.splice(index, 1);
+    return;
+  }
+}
+
+function queuePredictionSelectionInvalidatedMessages(session, deletedTemplate) {
+  if (!session || !deletedTemplate) return;
+
+  const query =
+    typeof session.lastPredictionQuery === "string" && session.lastPredictionQuery.trim()
+      ? session.lastPredictionQuery.trim()
+      : "";
+  const hasCandidates = Array.isArray(session.predictionTemplateCandidates) && session.predictionTemplateCandidates.length > 0;
+
+  pushMessageToSession(session, {
+    type: "assistant",
+    answer: hasCandidates
+      ? `当前已选案件模板《${deletedTemplate.caseName}》已被删除，本次观点预测流程已中止。请重新选择一个案件模板后再继续。`
+      : `当前已选案件模板《${deletedTemplate.caseName}》已被删除，本次观点预测流程已中止，且当前已无可用案件模板。`,
+    citations: [],
+  });
+
+  if (!query || !hasCandidates) {
+    return;
+  }
+
+  const answer = buildPredictionTemplateMatchSummary(session);
+  pushMessageToSession(session, {
+    type: "assistant",
+    answer,
+    citations: [],
+    predictionTemplateMatch: {
+      query,
+      selectedTemplateId: null,
+      candidates: session.predictionTemplateCandidates.map(normalizePredictionTemplate).filter(Boolean),
+    },
+  });
 }
 
 function getPendingAttachmentFileStore(sessionId) {
@@ -717,7 +1279,7 @@ function loadSessions() {
         id: s.id,
         title: typeof s.title === "string" && s.title.trim() ? s.title : "新会话",
         updatedAt: Number.isFinite(s.updatedAt) ? s.updatedAt : Date.now(),
-        mode: s.mode === "contract-review" ? "contract-review" : "chat",
+        mode: normalizeComposerMode(s.mode),
         chatAttachments: Array.isArray(s.chatAttachments)
           ? s.chatAttachments.map(normalizeChatAttachment).filter(Boolean)
           : [],
@@ -732,6 +1294,15 @@ function loadSessions() {
           typeof s.reviewSelectedTemplateId === "string" && s.reviewSelectedTemplateId.trim()
             ? s.reviewSelectedTemplateId
             : null,
+        predictionTemplateCandidates: Array.isArray(s.predictionTemplateCandidates)
+          ? s.predictionTemplateCandidates.map(normalizePredictionTemplate).filter(Boolean)
+          : [],
+        predictionSelectedTemplateId:
+          typeof s.predictionSelectedTemplateId === "string" && s.predictionSelectedTemplateId.trim()
+            ? s.predictionSelectedTemplateId
+            : null,
+        lastPredictionQuery:
+          typeof s.lastPredictionQuery === "string" && s.lastPredictionQuery.trim() ? s.lastPredictionQuery : null,
         lastReviewQuery:
           typeof s.lastReviewQuery === "string" && s.lastReviewQuery.trim() ? s.lastReviewQuery : null,
         rightSidebarTab: normalizeRightSidebarTab(s.rightSidebarTab),
@@ -784,6 +1355,9 @@ function createSession(firstQuery = "") {
     reviewRecommendedTemplate: null,
     reviewTemplateCandidates: [],
     reviewSelectedTemplateId: null,
+    predictionTemplateCandidates: [],
+    predictionSelectedTemplateId: null,
+    lastPredictionQuery: null,
     lastReviewQuery: null,
     rightSidebarTab: "attachments",
     messages: [],
@@ -1099,21 +1673,32 @@ function getComposerMode() {
 }
 
 function syncComposerModeUi() {
-  const isReviewMode = getComposerMode() === "contract-review";
+  const mode = getComposerMode();
+  const isReviewMode = mode === "contract-review";
+  const isPredictionMode = mode === "opponent-prediction";
   contractReviewModeToggle.classList.toggle("active", isReviewMode);
   contractReviewModeToggle.setAttribute("aria-pressed", String(isReviewMode));
-  reviewUploadBtn.disabled = false;
-  reviewUploadBtn.setAttribute("aria-disabled", "false");
-  reviewUploadBtn.title = isReviewMode ? "上传待审合同" : "上传聊天附件";
-  reviewUploadBtn.setAttribute("aria-label", isReviewMode ? "上传待审合同" : "上传聊天附件");
-  chatAttachmentInput.disabled = isReviewMode;
+  opponentPredictionModeToggle.classList.toggle("active", isPredictionMode);
+  opponentPredictionModeToggle.setAttribute("aria-pressed", String(isPredictionMode));
+  reviewUploadBtn.disabled = isPredictionMode;
+  reviewUploadBtn.setAttribute("aria-disabled", String(isPredictionMode));
+  reviewUploadBtn.title = isReviewMode
+    ? "上传待审合同"
+    : isPredictionMode
+      ? "请在左侧观点预测页管理模板材料"
+      : "上传聊天附件";
+  reviewUploadBtn.setAttribute(
+    "aria-label",
+    isReviewMode ? "上传待审合同" : isPredictionMode ? "请在左侧观点预测页管理模板材料" : "上传聊天附件"
+  );
+  chatAttachmentInput.disabled = isReviewMode || isPredictionMode;
   reviewContractInput.disabled = !isReviewMode;
-  input.placeholder = isReviewMode ? "输入审查要求..." : "发消息...";
+  input.placeholder = isReviewMode ? "输入审查要求..." : isPredictionMode ? "输入你想预测的问题..." : "发消息...";
   renderChatAttachments();
 }
 
 function setComposerMode(mode) {
-  const nextMode = mode === "contract-review" ? "contract-review" : "chat";
+  const nextMode = normalizeComposerMode(mode);
   const session = getActiveSession();
 
   if (session) {
@@ -1132,15 +1717,17 @@ function setComposerMode(mode) {
 }
 
 function setMenuActive(target) {
-  [menuFiles, menuContractReview, menuStatus].forEach((el) => el.classList.remove("active"));
+  [menuFiles, menuContractReview, menuOpponentPrediction, menuStatus].forEach((el) => el.classList.remove("active"));
   if (target === "files") menuFiles.classList.add("active");
   if (target === "contract-review") menuContractReview.classList.add("active");
+  if (target === "opponent-prediction") menuOpponentPrediction.classList.add("active");
   if (target === "status") menuStatus.classList.add("active");
 }
 
 function hidePanels() {
   panelFiles.classList.add("hidden");
   panelContractReview.classList.add("hidden");
+  panelOpponentPrediction.classList.add("hidden");
   panelStatus.classList.add("hidden");
 }
 
@@ -1169,6 +1756,7 @@ function showPanel(view) {
 
   panelFiles.classList.toggle("hidden", view !== "files");
   panelContractReview.classList.toggle("hidden", view !== "contract-review");
+  panelOpponentPrediction.classList.toggle("hidden", view !== "opponent-prediction");
   panelStatus.classList.toggle("hidden", view !== "status");
   setMenuActive(view);
 
@@ -1178,6 +1766,13 @@ function showPanel(view) {
 
   if (view === "contract-review") {
     loadTemplateList();
+  }
+
+  if (view === "opponent-prediction") {
+    renderPredictionTemplatePlaceholder();
+    void loadPredictionTemplatesRemote({ silent: true }).catch((err) => {
+      showPredictionTemplateFeedback(`加载案件模板失败：${err.message || err}`, "error", 6000);
+    });
   }
 
   if (view === "status") {
@@ -1200,6 +1795,11 @@ function restoreConversationView() {
 
 let fileFeedbackTimer = null;
 let templateFeedbackTimer = null;
+let predictionTemplateFeedbackTimer = null;
+
+function renderPredictionTemplatePlaceholder() {
+  renderPredictionTemplateList();
+}
 
 function showFileFeedback(message, type = "info", autoHideMs = 4500) {
   if (!fileFeedback) return;
@@ -1243,6 +1843,149 @@ function showTemplateFeedback(message, type = "info", autoHideMs = 4500) {
       templateFeedback.classList.add("hidden");
     }, autoHideMs);
   }
+}
+
+function showPredictionTemplateFeedback(message, type = "info", autoHideMs = 4500) {
+  if (!predictionTemplateFeedback) return;
+  if (predictionTemplateFeedbackTimer) {
+    clearTimeout(predictionTemplateFeedbackTimer);
+    predictionTemplateFeedbackTimer = null;
+  }
+  predictionTemplateFeedback.className = `file-feedback ${type}`;
+  predictionTemplateFeedback.textContent = message;
+  predictionTemplateFeedback.classList.remove("hidden");
+
+  if (autoHideMs > 0) {
+    predictionTemplateFeedbackTimer = setTimeout(() => {
+      predictionTemplateFeedback.classList.add("hidden");
+    }, autoHideMs);
+  }
+}
+
+function formatPredictionFileSize(size) {
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatPredictionTemplateTime(timestamp) {
+  if (!Number.isFinite(timestamp)) return "刚刚更新";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "刚刚更新";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function buildPredictionTemplateItem(template) {
+  const templateId = escapeHtml(template.id);
+  const caseName = escapeHtml(template.caseName || "未命名案件");
+  const caseMaterialCount = getPredictionCaseMaterialCount(template);
+  const opponentCorpusCount = getPredictionOpponentCorpusCount(template);
+  const updatedTime = escapeHtml(formatPredictionTemplateTime(template.updatedAt));
+
+  return `
+    <article class="template-item" data-prediction-template-id="${templateId}">
+      <div class="template-item-info">
+        <strong title="${caseName}">${caseName}</strong>
+        <span>案情材料 ${caseMaterialCount} 份 · 对方语料 ${opponentCorpusCount} 份 · 更新于 ${updatedTime}</span>
+      </div>
+      <button class="template-delete" type="button" data-prediction-template-delete="${templateId}">删除</button>
+    </article>
+  `;
+}
+
+function renderPredictionTemplateList() {
+  if (!predictionTemplateList) return;
+  if (!Array.isArray(predictionTemplates) || predictionTemplates.length === 0) {
+    predictionTemplateList.innerHTML = `<div class="template-empty">暂无案件模板</div>`;
+    if (predictionTemplateListCount) {
+      predictionTemplateListCount.textContent = "0 个";
+    }
+    return;
+  }
+
+  predictionTemplateList.innerHTML = predictionTemplates.map((template) => buildPredictionTemplateItem(template)).join("");
+  if (predictionTemplateListCount) {
+    predictionTemplateListCount.textContent = `${predictionTemplates.length} 个`;
+  }
+}
+
+function renderPredictionPendingFiles(target, files, emptyText) {
+  if (!target) return;
+  if (!Array.isArray(files) || files.length === 0) {
+    target.className = "prediction-upload-list prediction-upload-list-empty";
+    target.textContent = emptyText;
+    return;
+  }
+
+  target.className = "prediction-upload-list";
+  target.innerHTML = files
+    .map((file) => {
+      const fileName = escapeHtml(file.name || "未命名文件");
+      const details = [formatPredictionFileSize(file.size)];
+      if (file.type) {
+        details.push(escapeHtml(file.type));
+      }
+      return `
+        <div class="prediction-upload-file">
+          <strong title="${fileName}">${fileName}</strong>
+          <span>${details.join(" · ")}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function syncPredictionTemplateFormState() {
+  const caseName = typeof predictionCaseNameInput?.value === "string" ? predictionCaseNameInput.value.trim() : "";
+  const hasCaseMaterials = pendingPredictionCaseMaterialFiles.length > 0;
+  const canSave = Boolean(caseName) && hasCaseMaterials;
+
+  if (predictionTemplateSaveBtn) {
+    predictionTemplateSaveBtn.disabled = !canSave;
+  }
+
+  if (predictionCaseMaterialArea) {
+    predictionCaseMaterialArea.classList.toggle("has-files", hasCaseMaterials);
+  }
+  if (predictionOpponentCorpusArea) {
+    predictionOpponentCorpusArea.classList.toggle("has-files", pendingPredictionOpponentCorpusFiles.length > 0);
+  }
+
+  if (predictionTemplateActionHint) {
+    if (!caseName && !hasCaseMaterials) {
+      predictionTemplateActionHint.textContent = "填写案件名称并至少选择一份案情材料后可保存。";
+    } else if (!caseName) {
+      predictionTemplateActionHint.textContent = "案件名称必填。";
+    } else if (!hasCaseMaterials) {
+      predictionTemplateActionHint.textContent = "案情材料必填，至少需要一份。";
+    } else {
+      predictionTemplateActionHint.textContent = "已满足保存条件。保存后将写入后端案件模板库。";
+    }
+  }
+}
+
+function clearPredictionTemplateForm() {
+  pendingPredictionOpponentCorpusFiles = [];
+  pendingPredictionCaseMaterialFiles = [];
+  if (predictionCaseNameInput) {
+    predictionCaseNameInput.value = "";
+  }
+  if (predictionOpponentCorpusInput) {
+    predictionOpponentCorpusInput.value = "";
+  }
+  if (predictionCaseMaterialInput) {
+    predictionCaseMaterialInput.value = "";
+  }
+  renderPredictionPendingFiles(predictionOpponentCorpusFiles, [], "尚未选择对方语料");
+  renderPredictionPendingFiles(predictionCaseMaterialFiles, [], "尚未选择案情材料");
+  syncPredictionTemplateFormState();
 }
 
 function setTemplateUploadBusy(isBusy) {
@@ -1356,6 +2099,186 @@ function buildAssistantHtml(answer, citations, options = {}) {
   return `<div class="answer-title">助手回答</div>${notice}<p>${nl2br(answer || "已收到你的消息。")}</p>${buildCitationHtml(citations)}`;
 }
 
+function normalizePredictionReportResponse(report) {
+  if (!report || typeof report !== "object") return null;
+  const citations = Array.isArray(report.citations)
+    ? report.citations.map((c) => ({
+        file_name: c.file_name,
+        line_start: c.line_start,
+        line_end: c.line_end,
+        similarity_score: c.similarity_score,
+        snippet: c.snippet,
+      }))
+    : [];
+  const predictedArguments = Array.isArray(report.predicted_arguments ?? report.predictedArguments)
+    ? (report.predicted_arguments ?? report.predictedArguments)
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const localCitations = Array.isArray(item.citations)
+            ? item.citations.map((c) => ({
+                file_name: c.file_name,
+                line_start: c.line_start,
+                line_end: c.line_end,
+                similarity_score: c.similarity_score,
+                snippet: c.snippet,
+              }))
+            : [];
+          return {
+            title: item.title || "未命名观点",
+            basis: item.basis || "",
+            counter: item.counter || "",
+            opponentStatement: item.opponent_statement || item.opponentStatement || "",
+            priority: item.priority || "补充",
+            citations: localCitations,
+            inferenceOnly: Boolean(item.inference_only ?? item.inferenceOnly),
+            label: item.label || "观点",
+            category: item.category || "general",
+            sortReason: item.sort_reason || item.sortReason || "",
+          };
+        })
+        .filter(Boolean)
+    : [];
+
+  return {
+    reportId: report.report_id || report.reportId || "",
+    taskId: report.task_id || report.taskId || "",
+    sessionId: report.session_id || report.sessionId || "",
+    templateId: report.template_id || report.templateId || "",
+    caseName: report.case_name || report.caseName || "未命名案件",
+    query: report.query || "",
+    caseSummary: report.case_summary || report.caseSummary || "",
+    questionType: report.question_type || report.questionType || "general-opponent-view",
+    focusDimension: report.focus_dimension || report.focusDimension || "综合观点",
+    answerShape: report.answer_shape || report.answerShape || "general-list",
+    answerTitle: report.answer_title || report.answerTitle || "对方最可能提出的观点",
+    answerSummary: report.answer_summary || report.answerSummary || "",
+    retrievalQueries: Array.isArray(report.retrieval_queries ?? report.retrievalQueries)
+      ? (report.retrieval_queries ?? report.retrievalQueries).filter((item) => typeof item === "string" && item.trim())
+      : [],
+    predictedArguments,
+    counterStrategies: Array.isArray(report.counter_strategies ?? report.counterStrategies)
+      ? (report.counter_strategies ?? report.counterStrategies)
+      : predictedArguments.map((item) => item.counter),
+    citations,
+    evidenceCount: Number.isFinite(report.evidence_count) ? report.evidence_count : Number.isFinite(report.evidenceCount) ? report.evidenceCount : predictedArguments.filter((item) => !item.inferenceOnly).length,
+    inferenceCount: Number.isFinite(report.inference_count) ? report.inference_count : Number.isFinite(report.inferenceCount) ? report.inferenceCount : predictedArguments.filter((item) => item.inferenceOnly).length,
+    uncertainties: Array.isArray(report.uncertainties) ? report.uncertainties : [],
+    source: "backend",
+  };
+}
+
+function buildPredictionQuestionHint(report) {
+  const questionType = report?.questionType || "general-opponent-view";
+  if (questionType === "rebuttal-angle") {
+    return "当前结果先回答“会从哪些角度辩驳”，再补每个角度下的具体抓手。";
+  }
+  if (questionType === "evidence-attack") {
+    return "当前结果优先展示对方最可能攻击的证据点和对应补强建议。";
+  }
+  if (questionType === "procedure-attack") {
+    return "当前结果只聚焦程序层面的阻断点，不平铺实体争议。";
+  }
+  if (questionType === "strongest-point") {
+    return "当前结果按主打概率和攻击力排序，只保留最值得优先防守的点。";
+  }
+  if (questionType === "sequence-strategy") {
+    return "当前结果强调对方可能先打什么、后打什么。";
+  }
+  return "当前结果已按本次问题重排，不再只是通用观点清单。";
+}
+
+function getPredictionPriorityClass(priority) {
+  if (priority === "主打") return "primary";
+  if (priority === "次打") return "secondary";
+  return "supporting";
+}
+
+function buildPredictionReportHtml(report) {
+  const argumentsHtml = Array.isArray(report?.predictedArguments)
+    ? report.predictedArguments
+        .map((item, index) => {
+          const localCitations = Array.isArray(item.citations) ? item.citations : [];
+          const isInferenceOnly = Boolean(item.inferenceOnly);
+          const priorityClass = getPredictionPriorityClass(item.priority);
+          return `
+            <section class="prediction-report-block ${isInferenceOnly ? "inference" : "evidence"}">
+              <div class="prediction-report-block-head">
+                <span class="prediction-report-index">${escapeHtml(item.label || `观点 ${index + 1}`)}</span>
+                <strong>${escapeHtml(item.title || "未命名观点")}</strong>
+                <span class="prediction-report-priority ${priorityClass}">${escapeHtml(item.priority || "补充")}</span>
+                <span class="prediction-report-support-tag ${isInferenceOnly ? "inference" : "evidence"}">${isInferenceOnly ? "推断项" : "引用支持"}</span>
+              </div>
+              <div class="prediction-report-statement">
+                <span>对方可能会这样表述</span>
+                <blockquote>${nl2br(item.opponentStatement || `对方可能会围绕“${escapeHtml(item.title || "该点")}”组织答辩表述。`)}</blockquote>
+              </div>
+              <p>${nl2br(item.basis || "")}</p>
+              ${item.sortReason ? `<div class="prediction-report-sort-reason">${nl2br(item.sortReason)}</div>` : ""}
+              <div class="prediction-report-support ${isInferenceOnly ? "inference" : "evidence"}">
+                ${isInferenceOnly ? "当前没有关联 citation，后续需要结合真实检索和材料缺口校准。" : "当前观点已关联引用依据，可在右侧查看来源内容。"}
+              </div>
+              <div class="prediction-report-counter">
+                <span>我方应对</span>
+                <p>${nl2br(item.counter || "")}</p>
+              </div>
+              ${isInferenceOnly ? "" : buildCitationHtml(localCitations)}
+            </section>
+          `;
+        })
+        .join("")
+    : "";
+
+  const uncertaintiesHtml = Array.isArray(report?.uncertainties) && report.uncertainties.length > 0
+    ? `
+      <div class="prediction-report-uncertainties">
+        <div class="prediction-report-uncertainties-title">当前限制</div>
+        ${report.uncertainties.map((item) => `<p>${nl2br(item)}</p>`).join("")}
+      </div>
+    `
+    : "";
+
+  const retrievalQueriesHtml = Array.isArray(report?.retrievalQueries) && report.retrievalQueries.length > 0
+    ? `
+      <div class="prediction-report-queries">
+        <div class="prediction-report-queries-title">本次问题驱动的检索方向</div>
+        <div class="prediction-report-queries-list">
+          ${report.retrievalQueries.map((item) => `<span class="prediction-report-query-chip">${escapeHtml(item)}</span>`).join("")}
+        </div>
+      </div>
+    `
+    : "";
+
+  return `
+    <div class="prediction-report-card">
+      <div class="prediction-report-head">
+        <div>
+          <div class="answer-title">观点预测报告</div>
+          <h4>${escapeHtml(report?.caseName || "未命名案件")}</h4>
+        </div>
+        <span class="prediction-report-tag">${report?.source === "backend" ? "真实结果" : "前端预览"}</span>
+      </div>
+      <div class="prediction-report-summary">
+        <div class="prediction-report-query">本次问题：${escapeHtml(report?.query || "")}</div>
+        <div class="prediction-report-answer-title">${escapeHtml(report?.answerTitle || "对方最可能提出的观点")}</div>
+        <div class="prediction-report-answer-summary">${nl2br(report?.answerSummary || buildPredictionQuestionHint(report))}</div>
+        <div class="prediction-report-metrics">
+          <span class="prediction-report-metric evidence">引用支持 ${escapeHtml(String(report?.evidenceCount ?? 0))}</span>
+          <span class="prediction-report-metric inference">推断项 ${escapeHtml(String(report?.inferenceCount ?? 0))}</span>
+        </div>
+        <p>${nl2br(report?.caseSummary || "")}</p>
+      </div>
+      ${retrievalQueriesHtml}
+      <div class="prediction-report-grid">
+        ${argumentsHtml}
+      </div>
+      ${uncertaintiesHtml}
+      <div class="prediction-report-footer">
+        ${buildCitationHtml(Array.isArray(report?.citations) ? report.citations : [])}
+      </div>
+    </div>
+  `;
+}
+
 function appendMessage(role, html, shouldScroll = true) {
   const el = document.createElement("article");
   el.className = `msg ${role}`.trim();
@@ -1368,12 +2291,17 @@ function appendMessage(role, html, shouldScroll = true) {
   return el;
 }
 
-function pushMessageToActive(message) {
-  const session = ensureActiveSession();
+function pushMessageToSession(session, message) {
+  if (!session || !message || typeof message !== "object") return;
   session.messages.push(message);
   if (session.messages.length > MAX_MESSAGES_PER_SESSION) {
     session.messages = session.messages.slice(-MAX_MESSAGES_PER_SESSION);
   }
+}
+
+function pushMessageToActive(message) {
+  const session = ensureActiveSession();
+  pushMessageToSession(session, message);
 
   if (message.type === "user" && (!session.title || session.title === "新会话")) {
     session.title = summarizeTitle(message.text || "");
@@ -1447,6 +2375,14 @@ function appendChatResponse(response, save = true) {
 
   if (save) {
     pushMessageToActive({ type: "assistant", answer, citations, attachmentUsed, attachmentFileName });
+  }
+}
+
+function appendPredictionReportResponse(report, save = true) {
+  const normalizedReport = normalizePredictionReportResponse(report) || report;
+  appendMessage("", buildPredictionReportHtml(normalizedReport));
+  if (save) {
+    pushMessageToActive({ type: "assistant", answer: normalizedReport?.caseSummary || "", citations: [], predictionReport: normalizedReport });
   }
 }
 
@@ -1706,6 +2642,14 @@ function renderSessionMessages(session) {
     if (msg.type === "assistant") {
       if (msg.templateMatch) {
         appendMessage("", buildReviewTemplateMessageHtml(msg.answer || "", msg.templateMatch), false);
+        return;
+      }
+      if (msg.predictionTemplateMatch) {
+        appendMessage("", buildPredictionTemplateMessageHtml(msg.answer || "", msg.predictionTemplateMatch), false);
+        return;
+      }
+      if (msg.predictionReport) {
+        appendMessage("", buildPredictionReportHtml(msg.predictionReport), false);
         return;
       }
       appendMessage(
@@ -2281,6 +3225,36 @@ composer.addEventListener("submit", async (e) => {
     return;
   }
 
+  if (getComposerMode() === "opponent-prediction") {
+    try {
+      await loadPredictionTemplatesRemote({ silent: true });
+    } catch (err) {
+      appendErrorMessage(`案件模板加载失败：${err.message || err}`, true);
+      return;
+    }
+    const session = ensureActiveSession(query);
+    activeSessionId = session.id;
+    session.lastPredictionQuery = query;
+    session.predictionTemplateCandidates = predictionTemplates.map(normalizePredictionTemplate).filter(Boolean);
+    session.predictionSelectedTemplateId = null;
+    touchSession(session);
+    renderHistory();
+    showChat();
+    appendUserMessage(query, true);
+    if (session.predictionTemplateCandidates.length === 0) {
+      appendChatResponse(
+        {
+          answer: "当前无可用案件模板。请先到左侧观点预测页创建案件模板，然后再发起观点预测。",
+          citations: [],
+        },
+        true
+      );
+      return;
+    }
+    appendPredictionTemplateMatchResponse(session, query, true);
+    return;
+  }
+
   executeSearch(query);
 });
 
@@ -2310,13 +3284,19 @@ rightSidebarTabButtons.forEach((button) => {
 
 menuFiles.addEventListener("click", () => showPanel("files"));
 menuContractReview.addEventListener("click", () => showPanel("contract-review"));
+menuOpponentPrediction.addEventListener("click", () => showPanel("opponent-prediction"));
 menuStatus.addEventListener("click", () => showPanel("status"));
 
 contractReviewModeToggle.addEventListener("click", () => {
   setComposerMode(getComposerMode() === "contract-review" ? "chat" : "contract-review");
 });
 
+opponentPredictionModeToggle.addEventListener("click", () => {
+  setComposerMode(getComposerMode() === "opponent-prediction" ? "chat" : "opponent-prediction");
+});
+
 reviewUploadBtn.addEventListener("click", () => {
+  if (getComposerMode() === "opponent-prediction") return;
   const targetInput = getComposerMode() === "contract-review" ? reviewContractInput : chatAttachmentInput;
   if (targetInput.disabled) return;
   targetInput.click();
@@ -2341,6 +3321,46 @@ reviewContractInput.addEventListener("change", async (event) => {
     event.target.value = "";
   }
 });
+
+if (predictionCaseNameInput) {
+  predictionCaseNameInput.addEventListener("input", () => {
+    syncPredictionTemplateFormState();
+  });
+}
+
+if (predictionOpponentCorpusInput) {
+  predictionOpponentCorpusInput.addEventListener("change", (event) => {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    pendingPredictionOpponentCorpusFiles = Array.from(event.target.files || []);
+    renderPredictionPendingFiles(predictionOpponentCorpusFiles, pendingPredictionOpponentCorpusFiles, "尚未选择对方语料");
+    syncPredictionTemplateFormState();
+  });
+}
+
+if (predictionCaseMaterialInput) {
+  predictionCaseMaterialInput.addEventListener("change", (event) => {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    pendingPredictionCaseMaterialFiles = Array.from(event.target.files || []);
+    renderPredictionPendingFiles(predictionCaseMaterialFiles, pendingPredictionCaseMaterialFiles, "尚未选择案情材料");
+    syncPredictionTemplateFormState();
+  });
+}
+
+if (predictionTemplateSaveBtn) {
+  predictionTemplateSaveBtn.addEventListener("click", async () => {
+    await savePredictionTemplateRemote();
+  });
+}
+
+if (predictionTemplateList) {
+  predictionTemplateList.addEventListener("click", async (event) => {
+    const trigger = event.target.closest("[data-prediction-template-delete]");
+    if (!trigger) return;
+    const templateId = trigger.getAttribute("data-prediction-template-delete") || "";
+    if (!templateId) return;
+    await deletePredictionTemplateRemote(templateId);
+  });
+}
 
 chatAttachmentTray.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-remove-attachment],[data-remove-review-file]");
@@ -2378,6 +3398,28 @@ chat.addEventListener("click", async (event) => {
     } finally {
       reviewSelectionLocksBySession.delete(session.id);
     }
+    return;
+  }
+
+  const predictionTrigger = event.target.closest("[data-prediction-template-select]");
+  if (predictionTrigger) {
+    const session = getActiveSession();
+    const templateId = predictionTrigger.getAttribute("data-prediction-template-select") || "";
+    const encodedQuery = predictionTrigger.getAttribute("data-prediction-query") || "";
+    const query =
+      (encodedQuery ? decodeURIComponent(encodedQuery) : "") ||
+      (typeof session?.lastPredictionQuery === "string" ? session.lastPredictionQuery : "");
+
+    if (!session || !templateId || !query) return;
+
+    session.predictionSelectedTemplateId = templateId;
+    session.lastPredictionQuery = query;
+    session.predictionTemplateCandidates = predictionTemplates.map(normalizePredictionTemplate).filter(Boolean);
+    removeLatestPredictionTemplateMatchMessage(session);
+    touchSession(session);
+    renderSessionMessages(session);
+    showChat();
+    await executePredictionPlaceholder(session, query, { appendUser: false });
     return;
   }
 
@@ -2540,3 +3582,8 @@ window.addEventListener("resize", () => {
 
 setCitationSidebarWidth(CITATION_SIDEBAR_DEFAULT_WIDTH);
 syncSidebarToggleLabel();
+renderPredictionPendingFiles(predictionOpponentCorpusFiles, pendingPredictionOpponentCorpusFiles, "尚未选择对方语料");
+renderPredictionPendingFiles(predictionCaseMaterialFiles, pendingPredictionCaseMaterialFiles, "尚未选择案情材料");
+renderPredictionTemplatePlaceholder();
+syncPredictionTemplateFormState();
+void loadPredictionTemplatesRemote({ silent: true }).catch(() => {});

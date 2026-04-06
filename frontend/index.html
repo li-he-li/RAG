@@ -27,6 +27,7 @@
         <nav class="menu" aria-label="主菜单">
           <button class="menu-item" id="menuFiles" type="button">文件管理</button>
           <button class="menu-item" id="menuContractReview" type="button">合同审查</button>
+          <button class="menu-item" id="menuOpponentPrediction" type="button">观点预测</button>
           <button class="menu-item" id="menuStatus" type="button">系统状态</button>
         </nav>
 
@@ -145,6 +146,79 @@
               </div>
             </section>
 
+            <section class="panel-view hidden" id="panelOpponentPrediction" aria-label="观点预测模板管理面板">
+              <div class="panel prediction-template-panel">
+                <div class="panel-header">
+                  <h3>观点预测模板库</h3>
+                  <button class="panel-close" data-close="panelOpponentPrediction" type="button" aria-label="关闭">×</button>
+                </div>
+                <p class="panel-text">在这里维护案件模板。模板由案件名称、案情材料和可选的对方语料组成，后续会在聊天区选择使用。</p>
+
+                <section class="prediction-template-section" aria-labelledby="predictionCaseNameLabel">
+                  <div class="prediction-template-label-row">
+                    <label class="prediction-template-label" id="predictionCaseNameLabel" for="predictionCaseNameInput">
+                      案件名称
+                      <span class="prediction-template-required">必填</span>
+                    </label>
+                    <span class="prediction-template-hint">用于区分多个案件模板</span>
+                  </div>
+                  <input
+                    class="prediction-template-input"
+                    id="predictionCaseNameInput"
+                    type="text"
+                    placeholder="例如：张三与李四买卖合同纠纷"
+                    autocomplete="off"
+                  />
+                </section>
+
+                <section class="prediction-template-section" aria-labelledby="predictionOpponentCorpusLabel">
+                  <div class="prediction-template-label-row">
+                    <div class="prediction-template-label" id="predictionOpponentCorpusLabel">
+                      对方语料
+                      <span class="prediction-template-optional">选填</span>
+                    </div>
+                    <span class="prediction-template-hint">如答辩状、聊天记录、律师函、对方合同文本</span>
+                  </div>
+                  <label class="upload-box prediction-upload-box" id="predictionOpponentCorpusArea" for="predictionOpponentCorpusInput">
+                    <strong>点击或拖拽上传对方语料</strong>
+                    <span>支持 .txt .md .pdf .doc .docx .xls .xlsx 文件</span>
+                  </label>
+                  <input id="predictionOpponentCorpusInput" type="file" multiple accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx" />
+                  <div class="prediction-upload-list prediction-upload-list-empty" id="predictionOpponentCorpusFiles">尚未选择对方语料</div>
+                </section>
+
+                <section class="prediction-template-section" aria-labelledby="predictionCaseMaterialLabel">
+                  <div class="prediction-template-label-row">
+                    <div class="prediction-template-label" id="predictionCaseMaterialLabel">
+                      案情材料
+                      <span class="prediction-template-required">必填</span>
+                    </div>
+                    <span class="prediction-template-hint">如起诉状、证据目录、事实说明、合同或往来文书</span>
+                  </div>
+                  <label class="upload-box prediction-upload-box" id="predictionCaseMaterialArea" for="predictionCaseMaterialInput">
+                    <strong>点击或拖拽上传案情材料</strong>
+                    <span>支持 .txt .md .pdf .doc .docx .xls .xlsx 文件</span>
+                  </label>
+                  <input id="predictionCaseMaterialInput" type="file" multiple accept=".txt,.md,.pdf,.doc,.docx,.xls,.xlsx" />
+                  <div class="prediction-upload-list prediction-upload-list-empty" id="predictionCaseMaterialFiles">尚未选择案情材料</div>
+                </section>
+
+                <div class="prediction-template-actions">
+                  <button class="primary-btn" id="predictionTemplateSaveBtn" type="button" disabled>保存为案件模板</button>
+                  <span class="prediction-template-action-hint" id="predictionTemplateActionHint">填写案件名称并至少选择一份案情材料后可保存。</span>
+                </div>
+                <div class="file-feedback hidden" id="predictionTemplateFeedback" aria-live="polite"></div>
+
+                <div class="template-list-head prediction-template-list-head">
+                  <h4>案件模板列表</h4>
+                  <span id="predictionTemplateListCount">0 个</span>
+                </div>
+                <div class="template-list prediction-template-list" id="predictionTemplateList">
+                  <div class="template-empty">暂无案件模板</div>
+                </div>
+              </div>
+            </section>
+
             <footer class="composer-wrap" id="composerWrap">
               <div class="composer-attachment-tray hidden" id="chatAttachmentTray" aria-label="聊天附件列表"></div>
               <form class="composer" id="composer">
@@ -166,7 +240,7 @@
                     </button>
                     <span class="composer-action-divider" aria-hidden="true"></span>
                     <button
-                      class="composer-action contract-review-toggle"
+                      class="composer-action composer-mode-toggle contract-review-toggle"
                       id="contractReviewModeToggle"
                       type="button"
                       aria-pressed="false"
@@ -178,6 +252,23 @@
                         <path d="M6 4.5h12a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 18 19.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5Z"></path>
                       </svg>
                       <span>合同审查</span>
+                    </button>
+                    <button
+                      class="composer-action composer-mode-toggle prediction-mode-toggle"
+                      id="opponentPredictionModeToggle"
+                      type="button"
+                      aria-pressed="false"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6.5 6.5h11"></path>
+                        <path d="M6.5 11.5h7"></path>
+                        <path d="M6.5 16.5h4"></path>
+                        <path d="M17.5 15.5a3 3 0 1 0-2.12 5.12"></path>
+                        <path d="m18.5 14.5 2 2"></path>
+                        <path d="M6 4.5h12a1.5 1.5 0 0 1 1.5 1.5v6"></path>
+                        <path d="M6 19.5A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5"></path>
+                      </svg>
+                      <span>观点预测</span>
                     </button>
                   </div>
 

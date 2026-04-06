@@ -313,6 +313,156 @@ class ContractReviewRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Prediction template management
+# ---------------------------------------------------------------------------
+
+
+class PredictionAssetKind(str, Enum):
+    CASE_MATERIAL = "case_material"
+    OPPONENT_CORPUS = "opponent_corpus"
+
+
+class PredictionTemplateAssetItem(BaseModel):
+    asset_id: str = Field(..., description="Prediction asset identifier")
+    template_id: str = Field(..., description="Owning prediction template identifier")
+    asset_kind: PredictionAssetKind = Field(..., description="Prediction asset category")
+    file_name: str = Field(..., description="Original uploaded file name")
+    mime_type: str = Field(default="", description="Client-provided MIME type")
+    size_bytes: int = Field(default=0, ge=0, description="Uploaded file size")
+    content_chars: int = Field(default=0, ge=0, description="Normalized text size")
+    total_lines: int = Field(default=0, ge=0, description="Normalized line count")
+    version_id: str = Field(..., description="Prediction asset version identifier")
+    content_preview: Optional[str] = Field(
+        default=None,
+        description="Preview of normalized text for management display",
+    )
+    created_at: datetime = Field(..., description="Asset creation time")
+    updated_at: datetime = Field(..., description="Asset update time")
+
+
+class PredictionTemplateItem(BaseModel):
+    template_id: str = Field(..., description="Prediction template identifier")
+    case_name: str = Field(..., description="Case template display name")
+    case_material_count: int = Field(default=0, ge=0, description="Number of case materials")
+    opponent_corpus_count: int = Field(default=0, ge=0, description="Number of opponent corpus assets")
+    created_at: datetime = Field(..., description="Template creation time")
+    updated_at: datetime = Field(..., description="Template update time")
+
+
+class PredictionTemplateDetail(PredictionTemplateItem):
+    created_by_session_id: Optional[str] = Field(
+        default=None,
+        description="Session that initially created the template",
+    )
+    assets: list[PredictionTemplateAssetItem] = Field(
+        default_factory=list,
+        description="All persisted prediction assets under this template",
+    )
+
+
+class PredictionTemplateDeleteResponse(BaseModel):
+    status: str = Field(default="deleted", description="Deletion status")
+    template_id: str = Field(..., description="Deleted prediction template identifier")
+
+
+class PredictionAssetDeleteResponse(BaseModel):
+    status: str = Field(default="deleted", description="Deletion status")
+    asset_id: str = Field(..., description="Deleted prediction asset identifier")
+
+
+# ---------------------------------------------------------------------------
+# Prediction flow
+# ---------------------------------------------------------------------------
+
+
+class OpponentPredictionStartRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, description="Owning chat session identifier")
+    template_id: str = Field(..., min_length=1, description="Selected prediction template identifier")
+    query: str = Field(..., min_length=1, description="Natural language prediction request")
+
+
+class PredictedArgument(BaseModel):
+    title: str = Field(..., description="Predicted viewpoint title")
+    basis: str = Field(..., description="Reasoning summary for the predicted viewpoint")
+    counter: str = Field(..., description="Suggested response guidance for the user side")
+    opponent_statement: str = Field(
+        default="",
+        description="Opponent-side simulated wording in answer/defense style",
+    )
+    priority: str = Field(
+        default="补充",
+        description="Predicted priority level such as 主打、次打、补充",
+    )
+    citations: list[ChatCitation] = Field(
+        default_factory=list,
+        description="Supporting citations associated with this viewpoint",
+    )
+    inference_only: bool = Field(
+        default=False,
+        description="True when the viewpoint is a model inference without supporting citation evidence",
+    )
+    label: str = Field(default="观点", description="Display label aligned with the user question")
+    category: str = Field(default="general", description="High-level category of the predicted viewpoint")
+    sort_reason: str = Field(
+        default="",
+        description="Why this viewpoint is ranked or positioned this way for the current user question",
+    )
+
+
+class OpponentPredictionReport(BaseModel):
+    report_id: str = Field(..., description="Persisted report identifier")
+    task_id: str = Field(..., description="Prediction task identifier")
+    session_id: str = Field(..., description="Owning chat session identifier")
+    template_id: str = Field(..., description="Selected prediction template identifier")
+    case_name: str = Field(..., description="Prediction template case name")
+    query: str = Field(..., description="Original user request")
+    case_summary: str = Field(..., description="High-level case summary")
+    predicted_arguments: list[PredictedArgument] = Field(
+        default_factory=list,
+        description="Structured predicted opponent viewpoints",
+    )
+    counter_strategies: list[str] = Field(
+        default_factory=list,
+        description="Flattened counter-strategy guidance",
+    )
+    citations: list[ChatCitation] = Field(
+        default_factory=list,
+        description="Top-level citations used by the report card",
+    )
+    evidence_count: int = Field(default=0, ge=0, description="Number of evidence-supported viewpoints")
+    inference_count: int = Field(default=0, ge=0, description="Number of inference-only viewpoints")
+    uncertainties: list[str] = Field(
+        default_factory=list,
+        description="Current gaps or limits in the prediction result",
+    )
+    question_type: str = Field(
+        default="general-opponent-view",
+        description="Inferred user-question type for answer shaping",
+    )
+    focus_dimension: str = Field(
+        default="综合观点",
+        description="Primary focus dimension inferred from the user question",
+    )
+    answer_shape: str = Field(
+        default="general-list",
+        description="How the final answer should be organized for display",
+    )
+    answer_title: str = Field(
+        default="对方最可能提出的观点",
+        description="Dynamic answer title aligned with the user question",
+    )
+    answer_summary: str = Field(
+        default="",
+        description="Short explanation of how the result has been organized around the user question",
+    )
+    retrieval_queries: list[str] = Field(
+        default_factory=list,
+        description="Opponent-oriented retrieval queries produced for this user question",
+    )
+    generated_at: datetime = Field(default_factory=datetime.utcnow, description="Report generation time")
+
+
+# ---------------------------------------------------------------------------
 # Error model
 # ---------------------------------------------------------------------------
 

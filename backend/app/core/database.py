@@ -23,7 +23,14 @@ class Base(DeclarativeBase):
 
 def init_db() -> None:
     """Create tables if they don't exist."""
-    from app.models.db_tables import DocumentTable, ParagraphTable  # noqa: F401
+    from app.models.db_tables import (  # noqa: F401
+        DocumentTable,
+        ParagraphTable,
+        PredictionReportSnapshotTable,
+        PredictionTemplateAssetParagraphTable,
+        PredictionTemplateAssetTable,
+        PredictionTemplateTable,
+    )
 
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized.")
