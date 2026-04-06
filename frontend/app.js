@@ -65,6 +65,7 @@ const chatAttachmentTray = document.getElementById("chatAttachmentTray");
 const rightSidebarAttachmentsBody = document.getElementById("rightSidebarAttachmentsBody");
 const contractReviewModeToggle = document.getElementById("contractReviewModeToggle");
 const opponentPredictionModeToggle = document.getElementById("opponentPredictionModeToggle");
+const similarCaseModeToggle = document.getElementById("similarCaseModeToggle");
 const historyList = document.getElementById("historyList");
 
 const menuFiles = document.getElementById("menuFiles");
@@ -182,7 +183,7 @@ function getPredictionOpponentCorpusCount(template) {
 }
 
 function normalizeComposerMode(mode) {
-  if (mode === "contract-review" || mode === "opponent-prediction") {
+  if (mode === "contract-review" || mode === "opponent-prediction" || mode === "similar-case") {
     return mode;
   }
   return "chat";
@@ -1672,28 +1673,55 @@ function getComposerMode() {
   return getActiveSession()?.mode || draftSessionMode;
 }
 
+function hasReadyChatAttachments(session) {
+  return Boolean(session && Array.isArray(session.chatAttachments) && session.chatAttachments.length > 0);
+}
+
+function buildSimilarCaseQuery(rawQuery) {
+  const query = typeof rawQuery === "string" ? rawQuery.trim() : "";
+  if (query) return query;
+  return "请基于我上传的案件材料，与数据库中的案例进行相似性检索，优先给出最相近的案件并说明相似点与差异点。";
+}
+
 function syncComposerModeUi() {
   const mode = getComposerMode();
   const isReviewMode = mode === "contract-review";
   const isPredictionMode = mode === "opponent-prediction";
+  const isSimilarCaseMode = mode === "similar-case";
   contractReviewModeToggle.classList.toggle("active", isReviewMode);
   contractReviewModeToggle.setAttribute("aria-pressed", String(isReviewMode));
   opponentPredictionModeToggle.classList.toggle("active", isPredictionMode);
   opponentPredictionModeToggle.setAttribute("aria-pressed", String(isPredictionMode));
+  similarCaseModeToggle.classList.toggle("active", isSimilarCaseMode);
+  similarCaseModeToggle.setAttribute("aria-pressed", String(isSimilarCaseMode));
   reviewUploadBtn.disabled = isPredictionMode;
   reviewUploadBtn.setAttribute("aria-disabled", String(isPredictionMode));
   reviewUploadBtn.title = isReviewMode
     ? "上传待审合同"
     : isPredictionMode
       ? "请在左侧观点预测页管理模板材料"
-      : "上传聊天附件";
+      : isSimilarCaseMode
+        ? "上传待比对案件材料"
+        : "上传聊天附件";
   reviewUploadBtn.setAttribute(
     "aria-label",
-    isReviewMode ? "上传待审合同" : isPredictionMode ? "请在左侧观点预测页管理模板材料" : "上传聊天附件"
+    isReviewMode
+      ? "上传待审合同"
+      : isPredictionMode
+        ? "请在左侧观点预测页管理模板材料"
+        : isSimilarCaseMode
+          ? "上传待比对案件材料"
+          : "上传聊天附件"
   );
   chatAttachmentInput.disabled = isReviewMode || isPredictionMode;
   reviewContractInput.disabled = !isReviewMode;
-  input.placeholder = isReviewMode ? "输入审查要求..." : isPredictionMode ? "输入你想预测的问题..." : "发消息...";
+  input.placeholder = isReviewMode
+    ? "输入审查要求..."
+    : isPredictionMode
+      ? "输入你想预测的问题..."
+      : isSimilarCaseMode
+        ? "输入检索要求，留空则按上传材料自动检索..."
+        : "发消息...";
   renderChatAttachments();
 }
 
@@ -2167,6 +2195,102 @@ function normalizePredictionReportResponse(report) {
   };
 }
 
+function normalizeSimilarCaseMatchItem(item) {
+  if (!item || typeof item !== "object") return null;
+  return {
+    docId: item.doc_id || item.docId || "",
+    fileName: item.file_name || item.fileName || "未命名文档",
+    versionId: item.version_id || item.versionId || "",
+    finalScore:
+      Number.isFinite(item.final_score) ? item.final_score : Number.isFinite(item.finalScore) ? item.finalScore : 0,
+    similarityScore:
+      Number.isFinite(item.similarity_score) ? item.similarity_score : Number.isFinite(item.similarityScore) ? item.similarityScore : 0,
+    matchType: item.match_type || item.matchType || "similar_case",
+    matchReason: item.match_reason || item.matchReason || "",
+    textOverlapRatio:
+      Number.isFinite(item.text_overlap_ratio) ? item.text_overlap_ratio : Number.isFinite(item.textOverlapRatio) ? item.textOverlapRatio : 0,
+    fileNameAligned: Boolean(item.file_name_aligned ?? item.fileNameAligned),
+    matchedPoints: Array.isArray(item.matched_points ?? item.matchedPoints)
+      ? (item.matched_points ?? item.matchedPoints).filter((value) => typeof value === "string" && value.trim())
+      : [],
+    matchedProfileFields: Array.isArray(item.matched_profile_fields ?? item.matchedProfileFields)
+      ? (item.matched_profile_fields ?? item.matchedProfileFields).filter((value) => typeof value === "string" && value.trim())
+      : [],
+    citations: Array.isArray(item.citations)
+      ? item.citations.map((c) => ({
+          file_name: c.file_name,
+          line_start: c.line_start,
+          line_end: c.line_end,
+          similarity_score: c.similarity_score,
+          snippet: c.snippet,
+        }))
+      : [],
+  };
+}
+
+function normalizeSimilarCaseProfile(profile, fallbackFacts = []) {
+  if (!profile || typeof profile !== "object") {
+    return {
+      legalRelationship: "",
+      disputeFocuses: [],
+      claimTargets: [],
+      partyRoles: [],
+      keyFacts: Array.isArray(fallbackFacts) ? fallbackFacts : [],
+      timeline: [],
+      amountTerms: [],
+      retrievalIntent: "",
+    };
+  }
+  return {
+    legalRelationship: profile.legal_relationship || profile.legalRelationship || "",
+    disputeFocuses: Array.isArray(profile.dispute_focuses ?? profile.disputeFocuses)
+      ? (profile.dispute_focuses ?? profile.disputeFocuses).filter((item) => typeof item === "string" && item.trim())
+      : [],
+    claimTargets: Array.isArray(profile.claim_targets ?? profile.claimTargets)
+      ? (profile.claim_targets ?? profile.claimTargets).filter((item) => typeof item === "string" && item.trim())
+      : [],
+    partyRoles: Array.isArray(profile.party_roles ?? profile.partyRoles)
+      ? (profile.party_roles ?? profile.partyRoles).filter((item) => typeof item === "string" && item.trim())
+      : [],
+    keyFacts: Array.isArray(profile.key_facts ?? profile.keyFacts)
+      ? (profile.key_facts ?? profile.keyFacts).filter((item) => typeof item === "string" && item.trim())
+      : Array.isArray(fallbackFacts)
+        ? fallbackFacts
+        : [],
+    timeline: Array.isArray(profile.timeline)
+      ? profile.timeline.filter((item) => typeof item === "string" && item.trim())
+      : [],
+    amountTerms: Array.isArray(profile.amount_terms ?? profile.amountTerms)
+      ? (profile.amount_terms ?? profile.amountTerms).filter((item) => typeof item === "string" && item.trim())
+      : [],
+    retrievalIntent: profile.retrieval_intent || profile.retrievalIntent || "",
+  };
+}
+
+function normalizeSimilarCaseResponse(report) {
+  if (!report || typeof report !== "object") return null;
+  const extractedCasePoints = Array.isArray(report.extracted_case_points ?? report.extractedCasePoints)
+    ? (report.extracted_case_points ?? report.extractedCasePoints).filter((item) => typeof item === "string" && item.trim())
+    : [];
+  return {
+    sessionId: report.session_id || report.sessionId || "",
+    query: report.query || "",
+    comparisonQuery: report.comparison_query || report.comparisonQuery || "",
+    attachmentFileNames: Array.isArray(report.attachment_file_names ?? report.attachmentFileNames)
+      ? (report.attachment_file_names ?? report.attachmentFileNames).filter((item) => typeof item === "string" && item.trim())
+      : [],
+    extractedCasePoints,
+    caseSearchProfile: normalizeSimilarCaseProfile(report.case_search_profile ?? report.caseSearchProfile, extractedCasePoints),
+    exactMatch: normalizeSimilarCaseMatchItem(report.exact_match ?? report.exactMatch),
+    nearDuplicateMatches: Array.isArray(report.near_duplicate_matches ?? report.nearDuplicateMatches)
+      ? (report.near_duplicate_matches ?? report.nearDuplicateMatches).map(normalizeSimilarCaseMatchItem).filter(Boolean)
+      : [],
+    similarCaseMatches: Array.isArray(report.similar_case_matches ?? report.similarCaseMatches)
+      ? (report.similar_case_matches ?? report.similarCaseMatches).map(normalizeSimilarCaseMatchItem).filter(Boolean)
+      : [],
+  };
+}
+
 function buildPredictionQuestionHint(report) {
   const questionType = report?.questionType || "general-opponent-view";
   if (questionType === "rebuttal-angle") {
@@ -2279,6 +2403,81 @@ function buildPredictionReportHtml(report) {
   `;
 }
 
+function getSimilarCaseTypeLabel(matchType) {
+  if (matchType === "exact_duplicate") return "同案命中";
+  if (matchType === "near_duplicate") return "高度相似";
+  return "类案";
+}
+
+function buildSimilarCaseMatchHtml(item, emphasized = false) {
+  const finalScoreText = Number.isFinite(item?.finalScore) ? `${(item.finalScore * 100).toFixed(1)}%` : "--";
+  const semanticScoreText = Number.isFinite(item?.similarityScore) ? `${(item.similarityScore * 100).toFixed(1)}%` : "--";
+  const overlapText = Number.isFinite(item?.textOverlapRatio) ? `${(item.textOverlapRatio * 100).toFixed(1)}%` : "--";
+  const chips = Array.isArray(item?.matchedPoints)
+    ? item.matchedPoints.map((point) => `<span class="similar-case-chip">${escapeHtml(point)}</span>`).join("")
+    : "";
+  return `
+    <section class="similar-case-match ${emphasized ? "exact" : ""}">
+      <div class="similar-case-match-head">
+        <div>
+          <div class="similar-case-match-type">${escapeHtml(getSimilarCaseTypeLabel(item?.matchType))}</div>
+          <strong>${escapeHtml(item?.fileName || "未命名文档")}</strong>
+        </div>
+        <div class="similar-case-match-metrics">
+          <span>综合分 ${escapeHtml(finalScoreText)}</span>
+          <span>语义分 ${escapeHtml(semanticScoreText)}</span>
+          <span>文本重合 ${escapeHtml(overlapText)}</span>
+        </div>
+      </div>
+      <p class="similar-case-match-reason">${nl2br(item?.matchReason || "")}</p>
+      ${chips ? `<div class="similar-case-chip-row">${chips}</div>` : ""}
+      ${buildCitationHtml(Array.isArray(item?.citations) ? item.citations : [])}
+    </section>
+  `;
+}
+
+function buildSimilarCaseReportHtml(report) {
+  const attachmentText = Array.isArray(report?.attachmentFileNames) && report.attachmentFileNames.length > 0
+    ? report.attachmentFileNames.map((item) => `《${escapeHtml(item)}》`).join("、")
+    : "当前上传材料";
+  const nearHtml = Array.isArray(report?.nearDuplicateMatches) && report.nearDuplicateMatches.length > 0
+    ? report.nearDuplicateMatches.map((item) => buildSimilarCaseMatchHtml(item)).join("")
+    : "";
+  const similarHtml = Array.isArray(report?.similarCaseMatches) && report.similarCaseMatches.length > 0
+    ? report.similarCaseMatches.map((item) => buildSimilarCaseMatchHtml(item)).join("")
+    : "";
+  const hasExact = Boolean(report?.exactMatch);
+  const hasNear = Boolean(nearHtml);
+  const hasSimilar = Boolean(similarHtml);
+  const emptyHtml = !hasExact && !hasNear && !hasSimilar
+    ? `<section class="similar-case-report-section"><p class="panel-text">未检索到足够相似的案例。</p></section>`
+    : "";
+  return `
+    <div class="similar-case-report-card">
+      <div class="similar-case-report-head">
+        <div>
+          <div class="answer-title">类案检索结果</div>
+          <h4>基于 ${attachmentText} 的独立类案比对</h4>
+        </div>
+        <span class="similar-case-report-tag">独立链路</span>
+      </div>
+      ${hasExact ? `<section class="similar-case-report-section">
+        <div class="similar-case-report-section-title">同案检测</div>
+        ${buildSimilarCaseMatchHtml(report.exactMatch, true)}
+      </section>` : ""}
+      ${hasNear ? `<section class="similar-case-report-section">
+        <div class="similar-case-report-section-title">高度相似候选</div>
+        <div class="similar-case-match-list">${nearHtml}</div>
+      </section>` : ""}
+      ${hasSimilar ? `<section class="similar-case-report-section">
+        <div class="similar-case-report-section-title">普通相似案例</div>
+        <div class="similar-case-match-list">${similarHtml}</div>
+      </section>` : ""}
+      ${emptyHtml}
+    </div>
+  `;
+}
+
 function appendMessage(role, html, shouldScroll = true) {
   const el = document.createElement("article");
   el.className = `msg ${role}`.trim();
@@ -2383,6 +2582,65 @@ function appendPredictionReportResponse(report, save = true) {
   appendMessage("", buildPredictionReportHtml(normalizedReport));
   if (save) {
     pushMessageToActive({ type: "assistant", answer: normalizedReport?.caseSummary || "", citations: [], predictionReport: normalizedReport });
+  }
+}
+
+function appendSimilarCaseReportResponse(report, save = true) {
+  const normalizedReport = normalizeSimilarCaseResponse(report) || report;
+  appendMessage("", buildSimilarCaseReportHtml(normalizedReport));
+  if (save) {
+    pushMessageToActive({ type: "assistant", answer: "", citations: [], similarCaseReport: normalizedReport });
+  }
+}
+
+async function executeSimilarCaseSearch(query) {
+  const session = ensureActiveSession(query);
+  activeSessionId = session.id;
+  persistSessions();
+  renderHistory();
+
+  showChat();
+  appendUserMessage(query, true);
+  let loadingNode = appendLoadingMessage("类案比对中");
+
+  try {
+    const response = await fetch(`${API_BASE}/similar-cases/compare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: session.id,
+        query,
+        top_k_documents: 5,
+        top_k_paragraphs: 3,
+      }),
+    });
+
+    if (!response.ok) {
+      if (loadingNode?.isConnected) {
+        loadingNode.remove();
+      }
+      const raw = await response.text();
+      let err = {};
+      try {
+        err = raw ? JSON.parse(raw) : {};
+      } catch {
+        err = { detail: raw };
+      }
+      appendErrorMessage(`类案检索失败 (${response.status})：${err.detail || "未知错误"}`, true);
+      return;
+    }
+
+    const payload = await response.json();
+    if (loadingNode?.isConnected) {
+      loadingNode.remove();
+      loadingNode = null;
+    }
+    appendSimilarCaseReportResponse(payload, true);
+  } catch (err) {
+    if (loadingNode?.isConnected) {
+      loadingNode.remove();
+    }
+    appendErrorMessage(`无法连接到后端服务：${err.message}`, true);
   }
 }
 
@@ -2650,6 +2908,10 @@ function renderSessionMessages(session) {
       }
       if (msg.predictionReport) {
         appendMessage("", buildPredictionReportHtml(msg.predictionReport), false);
+        return;
+      }
+      if (msg.similarCaseReport) {
+        appendMessage("", buildSimilarCaseReportHtml(msg.similarCaseReport), false);
         return;
       }
       appendMessage(
@@ -3176,11 +3438,13 @@ syncRightSidebarTabUi();
 
 composer.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const query = input.value.trim();
+  const rawQuery = input.value;
+  const currentMode = getComposerMode();
+  const query = currentMode === "similar-case" ? buildSimilarCaseQuery(rawQuery) : rawQuery.trim();
   if (!query) return;
   input.value = "";
 
-  if (getComposerMode() === "contract-review") {
+  if (currentMode === "contract-review") {
     const session = ensureActiveSession(query);
     session.lastReviewQuery = query;
     touchSession(session);
@@ -3225,7 +3489,7 @@ composer.addEventListener("submit", async (e) => {
     return;
   }
 
-  if (getComposerMode() === "opponent-prediction") {
+  if (currentMode === "opponent-prediction") {
     try {
       await loadPredictionTemplatesRemote({ silent: true });
     } catch (err) {
@@ -3252,6 +3516,19 @@ composer.addEventListener("submit", async (e) => {
       return;
     }
     appendPredictionTemplateMatchResponse(session, query, true);
+    return;
+  }
+
+  if (currentMode === "similar-case") {
+    const session = ensureActiveSession(query);
+    activeSessionId = session.id;
+    touchSession(session);
+    renderHistory();
+    if (!hasReadyChatAttachments(session)) {
+      executeSearch(query);
+      return;
+    }
+    await executeSimilarCaseSearch(query);
     return;
   }
 
@@ -3293,6 +3570,10 @@ contractReviewModeToggle.addEventListener("click", () => {
 
 opponentPredictionModeToggle.addEventListener("click", () => {
   setComposerMode(getComposerMode() === "opponent-prediction" ? "chat" : "opponent-prediction");
+});
+
+similarCaseModeToggle.addEventListener("click", () => {
+  setComposerMode(getComposerMode() === "similar-case" ? "chat" : "similar-case");
 });
 
 reviewUploadBtn.addEventListener("click", () => {
