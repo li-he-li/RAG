@@ -176,6 +176,65 @@ class ChatResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Similar case search
+# ---------------------------------------------------------------------------
+
+
+class SimilarCaseSearchRequest(BaseModel):
+    """Request body for dedicated similar-case comparison against uploaded materials."""
+
+    session_id: str = Field(..., min_length=1, description="Owning chat session identifier")
+    query: str = Field(default="", description="Optional natural-language retrieval requirement")
+    top_k_documents: int = Field(default=5, ge=1, le=20, description="Maximum number of matched documents")
+    top_k_paragraphs: int = Field(default=3, ge=1, le=10, description="Maximum evidence paragraphs per matched document")
+
+
+class CaseSearchProfile(BaseModel):
+    """Structured case-search portrait extracted from uploaded materials."""
+
+    legal_relationship: str = Field(default="", description="Primary legal relationship inferred from the materials")
+    dispute_focuses: list[str] = Field(default_factory=list, description="Core dispute focuses for retrieval")
+    claim_targets: list[str] = Field(default_factory=list, description="Main claim targets or disputed objects")
+    party_roles: list[str] = Field(default_factory=list, description="Key party roles involved in the case")
+    key_facts: list[str] = Field(default_factory=list, description="Most important factual points extracted for search")
+    timeline: list[str] = Field(default_factory=list, description="Important dated events or timeline points")
+    amount_terms: list[str] = Field(default_factory=list, description="Important amount, duration, or ratio terms")
+    retrieval_intent: str = Field(default="", description="User-supplied retrieval requirement or extra search intent")
+
+
+class SimilarCaseMatchItem(BaseModel):
+    """A single match returned by the dedicated similar-case search flow."""
+
+    doc_id: str = Field(..., description="Matched document identifier")
+    file_name: str = Field(..., description="Matched document file name")
+    version_id: str = Field(..., description="Matched document version identifier")
+    final_score: float = Field(default=0.0, description="Final blended comparison score [0, 1]")
+    similarity_score: float = Field(default=0.0, description="Overall similarity score [0, 1]")
+    match_type: str = Field(..., description="exact_duplicate / near_duplicate / similar_case")
+    match_reason: str = Field(default="", description="Compact explanation of why this document matched")
+    text_overlap_ratio: float = Field(default=0.0, description="Normalized text overlap ratio [0, 1]")
+    file_name_aligned: bool = Field(default=False, description="Whether normalized file names strongly align")
+    citations: list[ChatCitation] = Field(default_factory=list, description="Top supporting evidence snippets")
+    matched_points: list[str] = Field(default_factory=list, description="Compact matched-point labels")
+    matched_profile_fields: list[str] = Field(default_factory=list, description="Portrait fields that strongly aligned")
+
+
+class SimilarCaseSearchResponse(BaseModel):
+    """Structured response for the dedicated similar-case comparison flow."""
+
+    session_id: str = Field(..., description="Owning chat session identifier")
+    query: str = Field(default="", description="Original user requirement")
+    comparison_query: str = Field(default="", description="Runtime comparison query built from uploaded materials")
+    attachment_file_names: list[str] = Field(default_factory=list, description="Uploaded case materials used for comparison")
+    case_search_profile: CaseSearchProfile = Field(default_factory=CaseSearchProfile, description="Structured case-search portrait")
+    extracted_case_points: list[str] = Field(default_factory=list, description="Deprecated compatibility field; mirrors key facts")
+    exact_match: Optional[SimilarCaseMatchItem] = Field(default=None, description="Exact duplicate hit when available")
+    near_duplicate_matches: list[SimilarCaseMatchItem] = Field(default_factory=list, description="Highly similar duplicate-like matches")
+    similar_case_matches: list[SimilarCaseMatchItem] = Field(default_factory=list, description="General similar-case matches")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Ingest / index request
 # ---------------------------------------------------------------------------
 

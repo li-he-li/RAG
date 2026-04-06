@@ -30,6 +30,8 @@ from app.models.schemas import (
     DocumentListItem,
     ErrorResponse,
     ReviewTemplateRecommendationResponse,
+    SimilarCaseSearchRequest,
+    SimilarCaseSearchResponse,
     SessionTempClearResponse,
     SessionTempFileItem,
     SessionTempFileKind,
@@ -38,6 +40,7 @@ from app.models.schemas import (
 )
 from app.services.indexer import ingest_document, delete_document
 from app.services.contract_review import stream_template_difference_review
+from app.services.similar_case_search import execute_similar_case_search
 from app.services.session_files import session_temp_file_store
 from app.services.template_recommendation import recommend_templates_for_session
 from app.services.chat import execute_grounded_chat, stream_grounded_chat
@@ -452,6 +455,29 @@ async def similarity_search(
         return JSONResponse(status_code=422, content=e.error.model_dump())
     except Exception as e:
         logger.exception("Search failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/similar-cases/compare",
+    response_model=SimilarCaseSearchResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "No uploaded case materials"},
+        503: {"model": ErrorResponse, "description": "Service not ready"},
+    },
+)
+async def similar_case_compare(
+    request: SimilarCaseSearchRequest,
+    db: Session = Depends(get_session),
+):
+    """Run dedicated similar-case comparison against session-scoped uploads."""
+    _ensure_retrieval_ready()
+    try:
+        return await execute_similar_case_search(request, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Similar-case comparison failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
