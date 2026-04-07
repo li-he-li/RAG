@@ -53,6 +53,10 @@ input {
   min-width: 0;
 }
 
+.sidebar-backdrop {
+  display: none;
+}
+
 .app.sidebar-collapsed .sidebar {
   padding-left: 0;
   padding-right: 0;
@@ -1986,6 +1990,25 @@ body.resizing-citation-sidebar {
 
   .app.sidebar-open .sidebar {
     transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: rgba(22, 25, 32, 0.32);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+
+  .app.sidebar-open .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .topbar {

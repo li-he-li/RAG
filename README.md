@@ -1,214 +1,108 @@
-# RAG Legal Similarity Search
+﻿# RAG Legal Similarity Search
 
-法律文书相似检索、证据溯源与法律工作流实验项目。当前项目包含四条主要能力链路：
+法律文书相似检索、证据溯源与法律工作流实验项目。
 
-- 普通聊天检索
-- 合同审查
-- 对方观点预测
-- 类案检索（独立链路）
+## Repository Layout
 
-## 项目结构
+- `backend/`: FastAPI 后端、检索与各业务链路
+- `frontend/`: 原生静态前端
+- `docs/`: 用户手册与说明文档
+- `scripts/`: 启动脚本与仓库检查脚本
 
-- `backend/`
-  FastAPI 后端、检索、文档入库、模板管理、预测链路
-- `frontend/`
-  原生静态前端
-- `openspec/`
-  需求、设计、任务拆解
-- `启动说明.md`
-  本地中文启动说明
-- `项目架构图.html`
-  架构示意
+## Core Capabilities
 
-## 当前功能
+1. 普通聊天检索
+- 基于数据库证据检索并回答
+- 支持会话附件参与检索
+- 回答展示引用来源与命中文件名
 
-### 1. 普通聊天检索
+2. 合同审查
+- 支持标准模板管理
+- 支持待审合同上传与流式审查
 
-- 基于数据库证据进行相似检索和回答
-- 支持会话级附件上传
-- 支持引用来源侧栏查看
+3. 观点预测
+- 支持案件模板管理（案情材料/对方语料）
+- 支持模板选择后的独立预测链路
 
-### 2. 合同审查
+4. 类案检索
+- 独立 `similar-case` 模式
+- 返回同案、高相似、普通类案分层结果
 
-- 左侧面板管理标准模板
-- 聊天区先发问题，再在主聊天流中选择模板
-- 支持审查目标合同上传
-- 模板推荐通过 `/api/contract-review/template-recommendation`
-- 审查生成通过 `/api/contract-review/stream`
+## Local Run
 
-### 3. 对方观点预测
-
-- 独立的 `opponent-prediction` 模式
-- 左侧 `观点预测` 面板用于管理案件模板
-- 案件模板包含：
-  - `案件名称` 必填
-  - `案情材料` 必填
-  - `对方语料` 选填
-- 聊天区先发送自然语言问题，再在主聊天流中选择案件模板
-- 预测链路独立于普通聊天和合同审查
-- 当前预测链路包含：
-  - 问题理解
-  - 案件画像重构
-  - 对方视角检索
-  - 对方观点生成
-  - 对方口吻生成
-  - 我方应对建议
-- 报告结果支持：
-  - 动态标题
-  - `对方可能会这样表述`
-  - `主打 / 次打 / 补充`
-  - 引用支持项与推断项区分
-
-### 4. 类案检索（独立链路）
-
-- 独立的 `similar-case` 模式
-- 使用当前会话聊天附件作为输入材料
-- 后端走 `/api/similar-cases/compare` 独立链路，不复用聊天接口
-- 检索结果分为：
-  - `exact_duplicate`（同案命中）
-  - `near_duplicate`（高度相似）
-  - `similar_case`（普通类案）
-
-## 环境要求
-
-- Python 3.12
-- Docker Desktop
-- PostgreSQL 容器：`legal-search-postgres`
-- Qdrant 容器：`legal-search-qdrant`
-
-以下内容属于本地运行产物，不应提交：
-
-- `backend/data/models_cache/`
-- `backend/.env`
-- `.tmp/`
-- 日志文件
-- `__pycache__/`
-
-## 本地启动
-
-### 1. 安装依赖
+### 1) Install Dependencies
 
 ```powershell
 cd backend
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
+### 2) Configure Environment
 
 ```powershell
 cd backend
 Copy-Item .env.example .env
 ```
 
-然后按实际情况填写 `backend/.env`。
-
-### 3. 启动后端
+### 3) Start Backend
 
 ```powershell
 cd backend
 D:\Anaconda\envs\legal-search\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-### 4. 启动前端
+### 4) Start Frontend
 
 ```powershell
 D:\Anaconda\python.exe -m http.server 3000 --bind 127.0.0.1 --directory frontend
 ```
 
-### 5. 验证
+### 5) Verify
 
-- 后端健康检查：`http://127.0.0.1:8000/api/health`
-- 前端页面：`http://127.0.0.1:3000/index.html`
-
-## 前端与 API
-
-- 前端默认按当前页面主机解析后端地址：`http://<current-host>:8000/api`
-- 可通过 `localStorage.apiBaseOverride` 覆盖 API 基地址
-
-## 观点预测相关说明
-
-### 案件模板存储
-
-- 观点预测模板不会进入主检索文档库 `documents / paragraphs`
-- 观点预测使用独立的数据表和服务
-- 删除策略为硬删除
-
-### 对方语料的作用
-
-- 对方语料会参与案件画像重构
-- 会影响对方有利点提取、检索 query 构造、观点排序和对方口吻生成
-- 对方语料越接近真实答辩口径，预测结果越贴近真实对方表达
-
-### 案件画像
-
-当前案件画像不是简单硬编码结论，而是：
-
-- 规则层先做候选线索收集
-- LLM 再基于候选线索和精选片段做结构化重构
-- LLM 失败时才回退到保守候选结果
+- Backend health: `http://127.0.0.1:8000/api/health`
+- Frontend page: `http://127.0.0.1:3000/index.html`
 
 ## Git Hooks
 
-仓库已提供 `.githooks/`：
-
+仓库使用 `.githooks/`:
 - `pre-commit`
 - `pre-push`
 - `commit-msg`
 
-启用方式：
+启用命令：
 
 ```powershell
 git config core.hooksPath .githooks
 ```
 
-### Hook 行为
+Hook 行为：
+- `pre-commit`: 仅检查已暂存文件，阻止提交缓存/模型/日志等垃圾文件，并检查 Python/JSON 语法
+- `pre-push`: 全仓 Python 语法检查、JSON/JSONL 校验、README hook 文档校验
+- `commit-msg`: conventional commit 校验
 
-- `pre-commit`
-  只检查已暂存文件，阻止提交 `.env`、模型缓存、日志、`__pycache__` 等垃圾文件，并校验 Python / JSON 基本语法
-- `pre-push`
-  对仓库内 Python 文件做全量语法检查，校验 JSON/JSONL，并确认 README 中包含 hook 说明
-- `commit-msg`
-  校验 conventional commit，允许的类型包括：
-  - `feat`
-  - `fix`
-  - `docs`
-  - `style`
-  - `refactor`
-  - `test`
-  - `chore`
-  - `perf`
-  - `ci`
-  - `build`
-  - `revert`
+紧急情况下可使用 `--no-verify` 跳过 hook（不建议常用）。
 
-必要时可以使用 `--no-verify` 跳过 hook，但只适合紧急情况。
-
-## 提交前最少校验
+## Pre-Submission Checks
 
 ```powershell
 python scripts/hook_checks.py pre-commit
 python scripts/hook_checks.py pre-push
-```
-
-如果改了前端主脚本，建议再跑：
-
-```powershell
 node --check frontend/app.js
 ```
 
-## 最近更新
+## Keep Out of Git
 
-### 2026-04-05
+以下内容为本地运行产物，不应提交：
+- `backend/data/models_cache/`
+- `backend/.env`
+- `.tmp/`
+- 日志文件
+- `__pycache__/`
 
-- 合同审查改成“先发问题，再在主聊天流中选模板”
-- 审查目标合同走会话级临时文件，不进入标准模板库
-- 普通聊天附件可参与相似检索和回答上下文
+## Recent Updates
 
-### 2026-04-06
+### 2026-04-07
 
-- 新增对方观点预测模式
-- 新增案件模板管理
-- 新增观点预测独立后端链路
-- 新增对方口吻输出
-- 新增问题驱动型结果重排
-- 新增案件画像重构流程
+- 普通聊天链路增强：答案顶部强制展示数据库命中的 PDF 文件名（来自 `citations.file_name`），并保持回答围绕用户问题。
+- 普通聊天检索增强：默认文档召回数量提升到 8；当附件聚焦检索未命中时，自动回退到原始用户问题再检索一次，降低漏召回。
+- 移动端适配：新增左侧栏遮罩层，点击左侧栏外区域可收起左侧栏；在移动端点击新对话、菜单项、历史会话后也会自动收起左侧栏。

@@ -42,6 +42,7 @@ const RIGHT_SIDEBAR_TABS = new Set(["attachments", "citations"]);
 
 const app = document.getElementById("app");
 const sidebarToggle = document.getElementById("sidebarToggle");
+const sidebarBackdrop = document.getElementById("sidebarBackdrop");
 
 const welcomePanel = document.getElementById("welcomePanel");
 const chat = document.getElementById("chat");
@@ -2081,6 +2082,31 @@ function buildCitationHtml(citations) {
   return "";
 }
 
+function collectRelatedFileNames(citations, limit = 8) {
+  if (!Array.isArray(citations) || citations.length === 0) return [];
+  const scoreByFile = new Map();
+  citations.forEach((item) => {
+    const fileName = typeof item?.file_name === "string" ? item.file_name.trim() : "";
+    if (!fileName) return;
+    const score = Number.isFinite(item?.similarity_score) ? item.similarity_score : 0;
+    const prev = scoreByFile.get(fileName);
+    if (prev === undefined || score > prev) {
+      scoreByFile.set(fileName, score);
+    }
+  });
+  return Array.from(scoreByFile.entries())
+    .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0], "zh-CN"))
+    .slice(0, Math.max(1, limit))
+    .map(([fileName]) => fileName);
+}
+
+function buildRelatedFileNamesHtml(citations) {
+  const fileNames = collectRelatedFileNames(citations, 8);
+  if (fileNames.length === 0) return "";
+  const items = fileNames.map((name, index) => `${index + 1}. ${escapeHtml(name)}`).join("<br>");
+  return `<div class="answer-source-notice"><strong>命中PDF文件名：</strong><br>${items}</div>`;
+}
+
 function buildCitationListHtml(citations) {
   if (!Array.isArray(citations) || citations.length === 0) {
     return `<p class="panel-text">当前回答没有可显示的引用案例。</p>`;
@@ -2124,7 +2150,8 @@ function buildAssistantHtml(answer, citations, options = {}) {
     attachmentUsed && attachmentFileName
       ? `<div class="answer-source-notice">已基于附件《${escapeHtml(attachmentFileName)}》进行检索</div>`
       : "";
-  return `<div class="answer-title">助手回答</div>${notice}<p>${nl2br(answer || "已收到你的消息。")}</p>${buildCitationHtml(citations)}`;
+  const fileNamesHtml = buildRelatedFileNamesHtml(citations);
+  return `<div class="answer-title">助手回答</div>${notice}${fileNamesHtml}<p>${nl2br(answer || "已收到你的消息。")}</p>${buildCitationHtml(citations)}`;
 }
 
 function normalizePredictionReportResponse(report) {
@@ -2960,6 +2987,7 @@ function renderHistory() {
       renderSessionMessages(session);
       showChat();
       syncComposerModeUi();
+      closeSidebarOnMobile();
       input.focus();
     });
 
@@ -3020,7 +3048,7 @@ async function executeSearch(query) {
         query,
         session_id: session.id,
         use_chat_attachment: true,
-        top_k_documents: 3,
+        top_k_documents: 8,
         top_k_paragraphs: 8,
       }),
     });
@@ -3550,6 +3578,7 @@ document.getElementById("newChatBtn").addEventListener("click", () => {
   renderHistory();
   showWelcome();
   syncComposerModeUi();
+  closeSidebarOnMobile();
   input.focus();
 });
 
@@ -3559,10 +3588,22 @@ rightSidebarTabButtons.forEach((button) => {
   });
 });
 
-menuFiles.addEventListener("click", () => showPanel("files"));
-menuContractReview.addEventListener("click", () => showPanel("contract-review"));
-menuOpponentPrediction.addEventListener("click", () => showPanel("opponent-prediction"));
-menuStatus.addEventListener("click", () => showPanel("status"));
+menuFiles.addEventListener("click", () => {
+  showPanel("files");
+  closeSidebarOnMobile();
+});
+menuContractReview.addEventListener("click", () => {
+  showPanel("contract-review");
+  closeSidebarOnMobile();
+});
+menuOpponentPrediction.addEventListener("click", () => {
+  showPanel("opponent-prediction");
+  closeSidebarOnMobile();
+});
+menuStatus.addEventListener("click", () => {
+  showPanel("status");
+  closeSidebarOnMobile();
+});
 
 contractReviewModeToggle.addEventListener("click", () => {
   setComposerMode(getComposerMode() === "contract-review" ? "chat" : "contract-review");
@@ -3838,6 +3879,13 @@ function syncSidebarToggleLabel() {
   );
 }
 
+function closeSidebarOnMobile() {
+  if (window.innerWidth > SIDEBAR_BREAKPOINT) return;
+  if (!app.classList.contains("sidebar-open")) return;
+  app.classList.remove("sidebar-open");
+  syncSidebarToggleLabel();
+}
+
 sidebarToggle.addEventListener("click", () => {
   if (window.innerWidth > SIDEBAR_BREAKPOINT) {
     app.classList.toggle("sidebar-collapsed");
@@ -3846,6 +3894,15 @@ sidebarToggle.addEventListener("click", () => {
   }
 
   syncSidebarToggleLabel();
+});
+
+if (sidebarBackdrop) {
+  sidebarBackdrop.addEventListener("click", closeSidebarOnMobile);
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  closeSidebarOnMobile();
 });
 
 window.addEventListener("resize", () => {
