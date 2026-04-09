@@ -18,13 +18,14 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.orm import Session
 
-from app.core.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.core.config import DEBUG, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from app.models.schemas import ChatCitation, ChatRequest, ChatResponse, SessionTempFileKind
 from app.services.attachment_focus import select_attachment_focus
 from app.services.embedding import encode_single
 from app.services.retrieval import dual_retrieve, rank_and_aggregate, understand_query
 from app.services.session_files import session_temp_file_store
 from app.services.traceability import validate_and_enrich_results
+from app.utils.streaming import encode_stream_event as _encode_stream_event, iter_text_chunks as _iter_text_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -409,13 +410,6 @@ def _build_deepseek_payload(
     return payload
 
 
-def _iter_text_chunks(text: str, chunk_size: int = 24) -> list[str]:
-    """Split fallback text into small chunks for frontend streaming."""
-    if not text:
-        return []
-    return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
-
-
 async def _ask_deepseek(query: str, citations: list[ChatCitation], retrieval_input: ChatRetrievalInput) -> str:
     """Ask DeepSeek, grounded when evidence exists, general otherwise."""
     if not DEEPSEEK_API_KEY:
@@ -437,7 +431,10 @@ async def _ask_deepseek(query: str, citations: list[ChatCitation], retrieval_inp
         return _fallback_answer(citations, query=query)
 
     if resp.status_code != 200:
-        logger.warning("DeepSeek chat failed: status=%s body=%s", resp.status_code, resp.text[:300])
+        if DEBUG:
+            logger.warning("DeepSeek chat failed: status=%s body=%s", resp.status_code, resp.text[:300])
+        else:
+            logger.warning("DeepSeek chat failed: status=%s", resp.status_code)
         return _fallback_answer(citations, query=query)
 
     try:
@@ -476,7 +473,10 @@ async def _stream_deepseek(
             ) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode("utf-8", errors="ignore")
-                    logger.warning("DeepSeek stream failed: status=%s body=%s", resp.status_code, body[:300])
+                    if DEBUG:
+                        logger.warning("DeepSeek stream failed: status=%s body=%s", resp.status_code, body[:300])
+                    else:
+                        logger.warning("DeepSeek stream failed: status=%s", resp.status_code)
                     for chunk in _iter_text_chunks(_fallback_answer(citations, query=query)):
                         yield chunk
                     return
@@ -516,11 +516,6 @@ async def _stream_deepseek(
 
     for chunk in _iter_text_chunks(_fallback_answer(citations, query=query)):
         yield chunk
-
-
-def _encode_stream_event(payload: dict) -> str:
-    """Encode a streaming event as a single NDJSON line."""
-    return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
 async def execute_grounded_chat(
@@ -584,4 +579,5 @@ async def stream_grounded_chat(
         )
     except Exception as exc:
         logger.exception("Grounded chat stream failed")
-        yield _encode_stream_event({"type": "error", "detail": str(exc)})
+        from app.core.http_errors import internal_error_detail
+        yield _encode_stream_event({"type": "error", "detail": internal_error_detail(exc)})

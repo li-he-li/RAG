@@ -19,6 +19,8 @@ from app.models.schemas import SessionTempFileKind
 from app.services.embedding import encode_texts
 from app.services.parser import parse_document
 from app.services.session_files import SessionTempFileRecord, session_temp_file_store
+from app.utils.math_helpers import cosine_similarity as _cosine_similarity
+from app.utils.streaming import encode_stream_event as _encode_stream_event, iter_text_chunks as _iter_text_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -85,16 +87,6 @@ class TemplateContext:
     template_clauses: list[ClauseUnit]
 
 
-def _encode_stream_event(payload: dict) -> str:
-    return json.dumps(payload, ensure_ascii=False) + "\n"
-
-
-def _iter_text_chunks(text: str, chunk_size: int = 32) -> list[str]:
-    if not text:
-        return []
-    return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
-
-
 def _clip(text: str, limit: int = 180) -> str:
     compact = re.sub(r"\s+", " ", text or "").strip()
     if len(compact) <= limit:
@@ -129,17 +121,6 @@ def _heading_overlap(left: set[str], right: set[str]) -> float:
         return 0.0
     union = left | right
     return len(left & right) / max(1, len(union))
-
-
-def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
-    if not vec_a or not vec_b or len(vec_a) != len(vec_b):
-        return 0.0
-    dot = sum(a * b for a, b in zip(vec_a, vec_b))
-    norm_a = sum(a * a for a in vec_a) ** 0.5
-    norm_b = sum(b * b for b in vec_b) ** 0.5
-    if norm_a <= 0 or norm_b <= 0:
-        return 0.0
-    return max(0.0, min(1.0, dot / (norm_a * norm_b)))
 
 
 def _extract_number_tokens(text: str) -> set[str]:
@@ -608,7 +589,7 @@ async def stream_template_difference_review(
                     answer_parts.append(separator)
                     yield _encode_stream_event({"type": "delta", "delta": separator})
 
-                for chunk in _iter_text_chunks(section_text):
+                for chunk in _iter_text_chunks(section_text, chunk_size=32):
                     answer_parts.append(chunk)
                     yield _encode_stream_event(
                         {
@@ -649,4 +630,5 @@ async def stream_template_difference_review(
         )
     except Exception as exc:
         logger.exception("Contract review stream failed")
-        yield _encode_stream_event({"type": "error", "detail": str(exc)})
+        from app.core.http_errors import internal_error_detail
+        yield _encode_stream_event({"type": "error", "detail": internal_error_detail(exc)})

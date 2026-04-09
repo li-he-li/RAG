@@ -10,26 +10,11 @@ from pathlib import Path
 from typing import Optional
 
 from app.core.config import MODELS_CACHE_DIR, RERANKER_MODEL_NAME, resolve_torch_device
+from app.utils.model_cache import resolve_local_snapshot as _resolve_local_snapshot
 
 logger = logging.getLogger(__name__)
 
 _reranker = None
-
-
-def _resolve_local_snapshot(model_name: str) -> Path | None:
-    model_dir = MODELS_CACHE_DIR / f"models--{model_name.replace('/', '--')}" / "snapshots"
-    if not model_dir.exists():
-        return None
-    candidates = []
-    for snap in model_dir.iterdir():
-        if not snap.is_dir():
-            continue
-        if (snap / "config.json").exists() and (snap / "tokenizer_config.json").exists():
-            candidates.append(snap)
-    if not candidates:
-        return None
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return candidates[0]
 
 
 def _get_reranker():

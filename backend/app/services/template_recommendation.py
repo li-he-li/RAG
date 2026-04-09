@@ -4,7 +4,6 @@ Template recommendation service for contract review sessions.
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 
@@ -17,6 +16,7 @@ from app.models.schemas import (
     SessionTempFileKind,
 )
 from app.services.embedding import encode_texts
+from app.utils.math_helpers import cosine_similarity as _cosine_similarity
 from app.services.session_files import session_temp_file_store
 
 
@@ -74,17 +74,6 @@ class TemplateProfile:
     title_tokens: set[str]
     structure_tokens: set[str]
     embedding: list[float]
-
-
-def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
-    if not vec_a or not vec_b or len(vec_a) != len(vec_b):
-        return 0.0
-    dot = sum(a * b for a, b in zip(vec_a, vec_b))
-    norm_a = math.sqrt(sum(a * a for a in vec_a))
-    norm_b = math.sqrt(sum(b * b for b in vec_b))
-    if norm_a <= 0 or norm_b <= 0:
-        return 0.0
-    return max(0.0, min(1.0, dot / (norm_a * norm_b)))
 
 
 def _collect_type_tokens(file_name: str, content: str) -> set[str]:

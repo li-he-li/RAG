@@ -1,13 +1,4 @@
 ﻿function resolveApiBase() {
-  try {
-    const override = localStorage.getItem("apiBaseOverride");
-    if (typeof override === "string" && override.trim()) {
-      return override.trim().replace(/\/+$/, "");
-    }
-  } catch {
-    // ignore storage access errors and fall back to location-derived API base
-  }
-
   if (window.location.protocol === "file:") {
     return "http://localhost:8000/api";
   }
@@ -32,11 +23,43 @@
 }
 
 const API_BASE = resolveApiBase();
+
+/** When backend sets API_KEY, set the same value in localStorage apiKeyOverride (dev/internal tools). */
+function resolveApiKey() {
+  try {
+    const k = localStorage.getItem("apiKeyOverride");
+    if (typeof k === "string" && k.trim()) return k.trim();
+  } catch {
+    // ignore storage errors
+  }
+  return "";
+}
+
+function apiFetch(input, init = {}) {
+  const key = resolveApiKey();
+  const nextInit = { ...init };
+  if (key) {
+    const h = new Headers(init.headers || {});
+    h.set("X-API-Key", key);
+    nextInit.headers = h;
+  }
+  // Add default timeout (120s) unless caller provides their own signal
+  if (!nextInit.signal) {
+    const controller = new AbortController();
+    nextInit.signal = controller.signal;
+    setTimeout(() => controller.abort(), 120_000);
+  }
+  return globalThis.fetch(input, nextInit);
+}
+
 const SESSION_STORAGE_KEY = "chatSessionsV2";
 const ACTIVE_SESSION_KEY = "activeChatSessionIdV2";
 const PREDICTION_TEMPLATE_STORAGE_KEY = "predictionTemplatesV1";
 const MAX_SESSIONS = 30;
 const MAX_MESSAGES_PER_SESSION = 120;
+
+/** Active stream controller — abort previous stream when a new request starts */
+let activeStreamController = null;
 const SIDEBAR_BREAKPOINT = 900;
 const RIGHT_SIDEBAR_TABS = new Set(["attachments", "citations"]);
 
@@ -284,7 +307,7 @@ function persistPredictionTemplates() {
 
 async function loadPredictionTemplatesRemote(options = {}) {
   const { silent = false } = options;
-  const response = await fetch(`${API_BASE}/prediction/templates`);
+  const response = await apiFetch(`${API_BASE}/prediction/templates`);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.detail || `加载案件模板失败 (${response.status})`);
@@ -339,7 +362,7 @@ async function savePredictionTemplateRemote() {
   showPredictionTemplateFeedback("正在保存案件模板...", "info", 0);
 
   try {
-    const response = await fetch(`${API_BASE}/prediction/templates`, {
+    const response = await apiFetch(`${API_BASE}/prediction/templates`, {
       method: "POST",
       body: formData,
     });
@@ -379,7 +402,7 @@ async function deletePredictionTemplateRemote(templateId) {
   }
 
   try {
-    const response = await fetch(`${API_BASE}/prediction/templates/${encodeURIComponent(templateId)}`, {
+    const response = await apiFetch(`${API_BASE}/prediction/templates/${encodeURIComponent(templateId)}`, {
       method: "DELETE",
     });
     if (!response.ok) {
@@ -873,7 +896,7 @@ async function executePredictionPlaceholder(session, query, options = {}) {
   }
   const loadingNode = appendLoadingMessage("观点预测中");
   try {
-    const response = await fetch(`${API_BASE}/opponent-prediction/start`, {
+    const response = await apiFetch(`${API_BASE}/opponent-prediction/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1347,8 +1370,12 @@ function summarizeTitle(text) {
 }
 
 function createSession(firstQuery = "") {
+  const sessionId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? `s_${crypto.randomUUID()}`
+      : `s_${Date.now()}_${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 12)}`;
   const session = {
-    id: `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: sessionId,
     title: summarizeTitle(firstQuery),
     updatedAt: Date.now(),
     mode: draftSessionMode,
@@ -2631,7 +2658,7 @@ async function executeSimilarCaseSearch(query) {
   let loadingNode = appendLoadingMessage("类案比对中");
 
   try {
-    const response = await fetch(`${API_BASE}/similar-cases/compare`, {
+    const response = await apiFetch(`${API_BASE}/similar-cases/compare`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2743,7 +2770,7 @@ async function uploadSessionTempFile(sessionId, kind, file, options = {}) {
 }
 
 async function deleteSessionTempFile(fileId) {
-  const response = await fetch(`${API_BASE}/session-files/${encodeURIComponent(fileId)}`, {
+  const response = await apiFetch(`${API_BASE}/session-files/${encodeURIComponent(fileId)}`, {
     method: "DELETE",
   });
 
@@ -2765,7 +2792,7 @@ async function clearSessionTempFiles(sessionId, kind) {
     url.searchParams.set("kind", kind);
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await apiFetch(url.toString(), {
     method: "DELETE",
   });
 
@@ -2781,7 +2808,7 @@ async function fetchReviewTemplateRecommendation(sessionId) {
   const url = new URL(`${API_BASE}/contract-review/template-recommendation`);
   url.searchParams.set("session_id", sessionId);
 
-  const response = await fetch(url.toString());
+  const response = await apiFetch(url.toString());
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.detail || `模板推荐失败 (${response.status})`);
@@ -2909,7 +2936,11 @@ function consumeJsonLines(buffer, chunk, onItem) {
   lines.forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
-    onItem(JSON.parse(trimmed));
+    try {
+      onItem(JSON.parse(trimmed));
+    } catch (e) {
+      console.warn("Skipping malformed JSON stream line:", trimmed.slice(0, 120), e);
+    }
   });
 
   return rest;
@@ -3028,6 +3059,14 @@ function renderHistory() {
 }
 
 async function executeSearch(query) {
+  // Abort any in-flight stream before starting a new one
+  if (activeStreamController) {
+    activeStreamController.abort();
+    activeStreamController = null;
+  }
+  activeStreamController = new AbortController();
+  const streamSignal = activeStreamController.signal;
+
   const session = ensureActiveSession(query);
   activeSessionId = session.id;
   persistSessions();
@@ -3041,9 +3080,10 @@ async function executeSearch(query) {
   let finalized = false;
 
   try {
-    const response = await fetch(`${API_BASE}/chat/stream`, {
+    const response = await apiFetch(`${API_BASE}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: streamSignal,
       body: JSON.stringify({
         query,
         session_id: session.id,
@@ -3142,6 +3182,14 @@ async function executeSearch(query) {
 }
 
 async function executeContractReview(query, templateId, options = {}) {
+  // Abort any in-flight stream before starting a new one
+  if (activeStreamController) {
+    activeStreamController.abort();
+    activeStreamController = null;
+  }
+  activeStreamController = new AbortController();
+  const streamSignal = activeStreamController.signal;
+
   const { appendUser = true } = options;
   const session = ensureActiveSession(query);
   activeSessionId = session.id;
@@ -3158,9 +3206,10 @@ async function executeContractReview(query, templateId, options = {}) {
   let finalized = false;
 
   try {
-    const response = await fetch(`${API_BASE}/contract-review/stream`, {
+    const response = await apiFetch(`${API_BASE}/contract-review/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: streamSignal,
       body: JSON.stringify({
         session_id: session.id,
         template_id: templateId,
@@ -3273,7 +3322,7 @@ function appendDocToList(data) {
   const deleteBtn = el.querySelector(".doc-delete");
   deleteBtn.addEventListener("click", async () => {
     try {
-      await fetch(`${API_BASE}/documents/${encodeURIComponent(data.doc_id)}`, { method: "DELETE" });
+      await apiFetch(`${API_BASE}/documents/${encodeURIComponent(data.doc_id)}`, { method: "DELETE" });
       el.remove();
       showEmptyDocHint();
     } catch (err) {
@@ -3295,7 +3344,7 @@ async function handleDocUpload(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE}/documents/upload`, {
+  const response = await apiFetch(`${API_BASE}/documents/upload`, {
     method: "POST",
     body: formData,
   });
@@ -3319,7 +3368,7 @@ async function loadDocumentList() {
   docList.innerHTML = "";
 
   try {
-    const response = await fetch(`${API_BASE}/documents?limit=100`);
+    const response = await apiFetch(`${API_BASE}/documents?limit=100`);
     if (!response.ok) {
       throw new Error(`加载失败 (${response.status})`);
     }
@@ -3381,7 +3430,7 @@ async function loadTemplateList() {
   updateTemplateListCount(0);
 
   try {
-    const response = await fetch(`${API_BASE}/templates?limit=200`);
+    const response = await apiFetch(`${API_BASE}/templates?limit=200`);
     if (!response.ok) {
       throw new Error(`加载失败 (${response.status})`);
     }
@@ -3396,7 +3445,7 @@ async function uploadTemplateFile(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE}/templates/upload`, {
+  const response = await apiFetch(`${API_BASE}/templates/upload`, {
     method: "POST",
     body: formData,
   });
@@ -3410,7 +3459,7 @@ async function uploadTemplateFile(file) {
 }
 
 async function deleteTemplateFile(docId) {
-  const response = await fetch(`${API_BASE}/templates/${encodeURIComponent(docId)}`, {
+  const response = await apiFetch(`${API_BASE}/templates/${encodeURIComponent(docId)}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -3430,7 +3479,7 @@ async function checkSystemStatus() {
   };
 
   try {
-    const response = await fetch(`${API_BASE}/health`);
+    const response = await apiFetch(`${API_BASE}/health`);
     if (!response.ok) throw new Error("health request failed");
 
     const data = await response.json();
@@ -3858,7 +3907,7 @@ document.getElementById("refreshStatusBtn").addEventListener("click", checkSyste
 
 document.getElementById("bootstrapBtn").addEventListener("click", async () => {
   try {
-    const response = await fetch(`${API_BASE}/bootstrap`, { method: "POST" });
+    const response = await apiFetch(`${API_BASE}/bootstrap`, { method: "POST" });
     if (!response.ok) {
       throw new Error(`请求失败 (${response.status})`);
     }

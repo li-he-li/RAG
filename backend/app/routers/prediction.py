@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_session
+from app.core.http_errors import internal_error_detail
 from app.models.schemas import (
     OpponentPredictionReport,
     OpponentPredictionStartRequest,
@@ -34,7 +35,7 @@ from app.services.prediction_templates import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["opponent-prediction"])
+router = APIRouter(tags=["opponent-prediction"])
 
 
 @router.post(
@@ -84,7 +85,7 @@ async def create_prediction_template_endpoint(
     except Exception as exc:
         db.rollback()
         logger.exception("Failed to create prediction template")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=internal_error_detail(exc)) from exc
 
 
 @router.get(
@@ -146,7 +147,7 @@ async def upload_prediction_template_assets_endpoint(
     except Exception as exc:
         db.rollback()
         logger.exception("Failed to upload prediction template assets")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=internal_error_detail(exc)) from exc
 
 
 @router.delete(
@@ -193,4 +194,4 @@ async def start_opponent_prediction(
     except Exception as exc:
         db.rollback()
         logger.exception("Failed to start opponent prediction")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=internal_error_detail(exc)) from exc

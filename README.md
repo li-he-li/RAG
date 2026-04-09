@@ -62,6 +62,10 @@ D:\Anaconda\python.exe -m http.server 3000 --bind 127.0.0.1 --directory frontend
 - Backend health: `http://127.0.0.1:8000/api/health`
 - Frontend page: `http://127.0.0.1:3000/index.html`
 
+## Security
+
+部署、CORS、`API_KEY`、上传限制与密钥管理见 [SECURITY.md](./SECURITY.md)。
+
 ## Git Hooks
 
 仓库使用 `.githooks/`:
@@ -76,8 +80,8 @@ git config core.hooksPath .githooks
 ```
 
 Hook 行为：
-- `pre-commit`: 仅检查已暂存文件，阻止提交缓存/模型/日志等垃圾文件，并检查 Python/JSON 语法
-- `pre-push`: 全仓 Python 语法检查、JSON/JSONL 校验、README hook 文档校验
+- `pre-commit`: 仅检查已暂存文件，阻止提交缓存/模型/日志等垃圾文件，检查 Python/JSON 语法，并校验注释语言统一为英文
+- `pre-push`: 全仓 Python 语法检查、JSON/JSONL 校验、README hook 文档校验，并校验注释语言统一为英文
 - `commit-msg`: conventional commit 校验
 
 紧急情况下可使用 `--no-verify` 跳过 hook（不建议常用）。

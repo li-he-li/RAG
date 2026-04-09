@@ -5,24 +5,27 @@ Legal Similarity Evidence Search - FastAPI Application
 from __future__ import annotations
 
 import logging
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
-
-# Load .env file before any config imports
-_env_path = Path(__file__).resolve().parent.parent / ".env"
-if _env_path.exists():
-    with open(_env_path, encoding="utf-8") as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _val = _line.split("=", 1)
-                os.environ.setdefault(_key, _val)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import run_bootstrap, SERVER_HOST, SERVER_PORT
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from app.core.config import (
+    get_cors_middleware_kwargs,
+    MAX_JSON_BODY_BYTES,
+    RATE_LIMIT_PER_MINUTE,
+    run_bootstrap,
+    SERVER_HOST,
+    SERVER_PORT,
+    TRUSTED_HOSTS,
+    warn_insecure_defaults,
+)
+from app.middleware.api_key import APIKeyMiddleware
+from app.middleware.max_json_body import MaxJsonBodyMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.core.database import init_db
 from app.routers.prediction import router as prediction_router
 from app.routers.search import router as search_router
@@ -39,6 +42,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan: bootstrap dependencies on startup."""
     logger.info("Starting Legal Similarity Evidence Search...")
+    warn_insecure_defaults()
 
     # Run bootstrap
     logger.info("Running automatic dependency bootstrap...")
@@ -75,18 +79,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - allow frontend to connect
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS (see CORS_ALLOW_ORIGINS in .env; never use credentials with allow_origins=*)
+app.add_middleware(CORSMiddleware, **get_cors_middleware_kwargs())
+# Optional shared secret for /api/* when API_KEY is set (OPTIONS exempt; see SECURITY.md)
+app.add_middleware(APIKeyMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware, per_minute=RATE_LIMIT_PER_MINUTE)
+app.add_middleware(MaxJsonBodyMiddleware, max_bytes=MAX_JSON_BODY_BYTES)
+if TRUSTED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
 
-# Include routers
-app.include_router(search_router)
-app.include_router(prediction_router)
+# Include routers — versioned prefix (/api/v1/*) is canonical
+app.include_router(search_router, prefix="/api/v1")
+app.include_router(prediction_router, prefix="/api/v1")
+
+# Backward-compatible unversioned mount (remove after all clients migrated)
+app.include_router(search_router, prefix="/api")
+app.include_router(prediction_router, prefix="/api")
 
 
 if __name__ == "__main__":

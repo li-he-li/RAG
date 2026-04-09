@@ -64,7 +64,7 @@
               </div>
             </section>
 
-            <section class="chat" id="chat" aria-label="对话区"></section>
+            <section class="chat" id="chat" role="log" aria-label="对话区" aria-live="polite"></section>
 
             <section class="panel-view hidden" id="panelFiles" aria-label="文件管理面板">
               <div class="panel">
@@ -223,7 +223,8 @@
             <footer class="composer-wrap" id="composerWrap">
               <div class="composer-attachment-tray hidden" id="chatAttachmentTray" aria-label="聊天附件列表"></div>
               <form class="composer" id="composer">
-                <input id="input" type="text" placeholder="发消息..." autocomplete="off" />
+                <label for="input" class="sr-only">输入消息</label>
+                <input id="input" type="text" placeholder="发消息..." autocomplete="off" aria-label="输入消息" />
                 <div class="composer-actions">
                   <div class="composer-actions-left">
                     <button

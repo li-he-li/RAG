@@ -1,15 +1,52 @@
+# ── Python ──────────────────────────────────────
 __pycache__/
 *.py[cod]
-*.log
+*.pyo
+*.egg-info/
+dist/
+build/
 .pytest_cache/
 .mypy_cache/
+*.log
 
+# ── Environment / Secrets ───────────────────────
+*.env
+!.env.example
+.env.*
+!.env.example
+
+# ── IDE / Editor ────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Project specifics ───────────────────────────
 .codex/
+.claude/
 .githooks/.state/
 backend/data/models_cache/
-backend/.env
 backend/backend_run.out.log
 backend/backend_run.err.log
 frontend_http.out.log
 frontend_http.err.log
 nul
+
+# ── Temporary / OS artifacts ────────────────────
+.tmp/
+.tmp-*
+*.tmp
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ── Screenshots / images (may contain sensitive data)
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+# Allow explicitly tracked images
+!docs/images/
+!images/

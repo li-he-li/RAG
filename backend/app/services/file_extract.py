@@ -14,6 +14,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from app.core.http_errors import parser_dependency_detail
+
 
 logger = logging.getLogger(__name__)
 DOC_PREVIEW_TEXT_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9][^\x00]{3,}")
@@ -43,7 +45,7 @@ def _extract_xlsx_text(raw: bytes) -> str:
     try:
         from openpyxl import load_workbook
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"XLSX parser unavailable: {exc}") from exc
+        raise HTTPException(status_code=500, detail=parser_dependency_detail("XLSX", exc)) from exc
 
     workbook = load_workbook(filename=io.BytesIO(raw), data_only=True, read_only=True)
     rows: list[str] = []
@@ -60,7 +62,7 @@ def _extract_xls_text(raw: bytes) -> str:
     try:
         import xlrd
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"XLS parser unavailable: {exc}") from exc
+        raise HTTPException(status_code=500, detail=parser_dependency_detail("XLS", exc)) from exc
 
     workbook = xlrd.open_workbook(file_contents=raw)
     rows: list[str] = []
@@ -159,7 +161,7 @@ def _extract_doc_text_via_ole(raw: bytes) -> str:
     try:
         import olefile
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"DOC parser unavailable: {exc}") from exc
+        raise HTTPException(status_code=500, detail=parser_dependency_detail("DOC", exc)) from exc
 
     candidates: list[str] = []
     with olefile.OleFileIO(io.BytesIO(raw)) as ole:
@@ -208,7 +210,7 @@ def extract_upload_text(file_name: str, raw: bytes) -> str:
         try:
             from pypdf import PdfReader
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"PDF parser unavailable: {exc}") from exc
+            raise HTTPException(status_code=500, detail=parser_dependency_detail("PDF", exc)) from exc
 
         reader = PdfReader(io.BytesIO(raw))
         text = "\n".join((page.extract_text() or "").strip() for page in reader.pages)
@@ -218,7 +220,7 @@ def extract_upload_text(file_name: str, raw: bytes) -> str:
         try:
             from docx import Document
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"DOCX parser unavailable: {exc}") from exc
+            raise HTTPException(status_code=500, detail=parser_dependency_detail("DOCX", exc)) from exc
 
         doc = Document(io.BytesIO(raw))
         text = "\n".join((p.text or "").strip() for p in doc.paragraphs)

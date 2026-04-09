@@ -22,6 +22,7 @@ from app.models.schemas import (
     PredictionTemplateDetail,
     PredictionTemplateItem,
 )
+from app.core.uploads import read_upload_bytes
 from app.services.file_extract import extract_upload_text
 from app.services.parser import parse_document
 
@@ -161,7 +162,7 @@ async def add_prediction_template_assets(
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="No filename provided")
-        raw = await file.read()
+        raw = await read_upload_bytes(file)
         content = extract_upload_text(file.filename, raw)
         parsed = parse_document(
             content=content,

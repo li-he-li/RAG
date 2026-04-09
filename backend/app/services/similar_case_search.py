@@ -345,7 +345,17 @@ def _make_citations_from_lines(doc: DocumentTable, top_lines: list[str], similar
 
 
 def _build_exact_match(db: Session, runtime: UploadedCaseRuntime) -> SimilarCaseMatchItem | None:
-    doc = db.query(DocumentTable).filter(DocumentTable.normalized_content == runtime.normalized_content).first()
+    # Use pre-computed text_hash for O(1) lookup instead of full-text comparison
+    from app.models.db_tables import DocumentTable as _DT
+    from sqlalchemy import func as _func
+
+    # Try hash-based lookup first (fast path)
+    doc = db.query(_DT).filter(
+        _func.md5(_DT.normalized_content) == runtime.text_hash
+    ).first()
+    # Fallback to exact text match if hash doesn't hit (in case of hash collision or missing index)
+    if not doc:
+        doc = db.query(_DT).filter(_DT.normalized_content == runtime.normalized_content).first()
     if not doc:
         return None
     file_name_aligned = _normalize_file_name(doc.file_name) == runtime.normalized_file_name

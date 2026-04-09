@@ -4,20 +4,16 @@ API router for similarity search endpoints.
 
 from __future__ import annotations
 
-import io
 import logging
-import re
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.config import get_bootstrap_status, get_bootstrap_missing_components
+from app.core.config import get_bootstrap_status, get_bootstrap_missing_components, API_KEY
+from app.core.http_errors import internal_error_detail
+from app.core.uploads import read_upload_bytes
 from app.core.database import get_session
 from app.models.db_tables import DocumentTable, ParagraphTable
 from app.models.schemas import (
@@ -43,14 +39,14 @@ from app.services.contract_review import stream_template_difference_review
 from app.services.similar_case_search import execute_similar_case_search
 from app.services.session_files import session_temp_file_store
 from app.services.template_recommendation import recommend_templates_for_session
+from app.services.file_extract import extract_upload_text as _extract_upload_text
 from app.services.chat import execute_grounded_chat, stream_grounded_chat
 from app.services.retrieval import execute_search
 from app.services.traceability import validate_and_enrich_results, TraceabilityValidationError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["legal-search"])
-DOC_PREVIEW_TEXT_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9][^\x00]{3,}")
+router = APIRouter(tags=["legal-search"])
 
 
 def _ensure_retrieval_ready() -> None:
@@ -64,273 +60,6 @@ def _ensure_retrieval_ready() -> None:
         detail = f"{detail} Missing: {', '.join(missing)}"
     raise HTTPException(status_code=503, detail=detail)
 
-
-def _extract_upload_text(file_name: str, raw: bytes) -> str:
-    """Extract plain text from supported upload types."""
-    ext = Path(file_name).suffix.lower()
-
-    if ext in {".txt", ".md"}:
-        return raw.decode("utf-8", errors="replace")
-
-    if ext == ".pdf":
-        try:
-            from pypdf import PdfReader
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"PDF 解析依赖未安装: {exc}",
-            ) from exc
-
-        reader = PdfReader(io.BytesIO(raw))
-        text = "\n".join((page.extract_text() or "").strip() for page in reader.pages)
-        if not text.strip():
-            raise HTTPException(status_code=422, detail="PDF 未提取到可用文本内容")
-        return text
-
-    if ext == ".docx":
-        try:
-            from docx import Document
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"DOCX 解析依赖未安装: {exc}",
-            ) from exc
-
-        doc = Document(io.BytesIO(raw))
-        text = "\n".join((p.text or "").strip() for p in doc.paragraphs)
-        if not text.strip():
-            raise HTTPException(status_code=422, detail="DOCX 未提取到可用文本内容")
-        return text
-
-    if ext == ".doc":
-        raise HTTPException(
-            status_code=415,
-            detail="暂不支持 .doc，请先另存为 .docx 后上传",
-        )
-
-    raise HTTPException(
-        status_code=415,
-        detail="不支持的文件类型，仅支持 .txt .md .pdf .docx",
-    )
-
-def _normalize_extracted_text(text: str) -> str:
-    lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
-    cleaned: list[str] = []
-    previous = None
-    for line in lines:
-        compact = re.sub(r"\s+", " ", line).strip()
-        if not compact or compact == previous:
-            continue
-        cleaned.append(compact)
-        previous = compact
-    return "\n".join(cleaned).strip()
-
-
-def _ensure_non_empty_text(text: str, detail: str) -> str:
-    normalized = _normalize_extracted_text(text)
-    if not normalized:
-        raise HTTPException(status_code=422, detail=detail)
-    return normalized
-
-
-def _extract_xlsx_text(raw: bytes) -> str:
-    try:
-        from openpyxl import load_workbook
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"XLSX parser unavailable: {exc}") from exc
-
-    workbook = load_workbook(filename=io.BytesIO(raw), data_only=True, read_only=True)
-    rows: list[str] = []
-    for sheet in workbook.worksheets:
-        rows.append(f"[工作表] {sheet.title}")
-        for values in sheet.iter_rows(values_only=True):
-            cells = [str(value).strip() for value in values if value is not None and str(value).strip()]
-            if cells:
-                rows.append(" | ".join(cells))
-    return _ensure_non_empty_text("\n".join(rows), "Excel 文件未提取到可用文本内容")
-
-
-def _extract_xls_text(raw: bytes) -> str:
-    try:
-        import xlrd
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"XLS parser unavailable: {exc}") from exc
-
-    workbook = xlrd.open_workbook(file_contents=raw)
-    rows: list[str] = []
-    for sheet in workbook.sheets():
-        rows.append(f"[工作表] {sheet.name}")
-        for row_idx in range(sheet.nrows):
-            values: list[str] = []
-            for col_idx in range(sheet.ncols):
-                value = sheet.cell_value(row_idx, col_idx)
-                if value is None:
-                    continue
-                text = str(value).strip()
-                if text:
-                    values.append(text)
-            if values:
-                rows.append(" | ".join(values))
-    return _ensure_non_empty_text("\n".join(rows), "Excel 文件未提取到可用文本内容")
-
-
-def _extract_doc_text_via_word(raw: bytes) -> str:
-    try:
-        import pythoncom
-        import win32com.client
-    except Exception:
-        return ""
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        source_path = Path(temp_dir) / "upload.doc"
-        output_path = Path(temp_dir) / "upload.txt"
-        source_path.write_bytes(raw)
-
-        pythoncom.CoInitialize()
-        word = None
-        doc = None
-        try:
-            word = win32com.client.Dispatch("Word.Application")
-            word.Visible = False
-            word.DisplayAlerts = 0
-            doc = word.Documents.Open(str(source_path), ReadOnly=True)
-            doc.SaveAs(str(output_path), FileFormat=7)
-        finally:
-            if doc is not None:
-                doc.Close(False)
-            if word is not None:
-                word.Quit()
-            pythoncom.CoUninitialize()
-
-        if not output_path.exists():
-            return ""
-        return output_path.read_text(encoding="utf-16", errors="ignore")
-
-
-def _extract_doc_text_via_antiword(raw: bytes) -> str:
-    antiword_path = shutil.which("antiword")
-    if not antiword_path:
-        return ""
-
-    with tempfile.NamedTemporaryFile(suffix=".doc", delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        temp_file.write(raw)
-
-    try:
-        completed = subprocess.run(
-            [antiword_path, str(temp_path)],
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-        )
-        if completed.returncode != 0:
-            return ""
-        return completed.stdout
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-
-def _extract_doc_stream_candidates(stream: bytes) -> list[str]:
-    candidates: list[str] = []
-    for encoding, offsets in (("utf-16le", (0, 1)), ("gb18030", (0,)), ("utf-8", (0,)), ("latin1", (0,))):
-        for offset in offsets:
-            if offset >= len(stream):
-                continue
-            try:
-                decoded = stream[offset:].decode(encoding, errors="ignore")
-            except Exception:
-                continue
-            decoded = decoded.replace("\x00", " ")
-            matches = DOC_PREVIEW_TEXT_RE.findall(decoded)
-            if matches:
-                candidates.append("\n".join(matches))
-    return candidates
-
-
-def _extract_doc_text_via_ole(raw: bytes) -> str:
-    try:
-        import olefile
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"DOC parser unavailable: {exc}") from exc
-
-    candidates: list[str] = []
-    with olefile.OleFileIO(io.BytesIO(raw)) as ole:
-        for stream_name in ole.listdir(streams=True, storages=False):
-            try:
-                stream = ole.openstream(stream_name).read()
-            except Exception:
-                continue
-            candidates.extend(_extract_doc_stream_candidates(stream))
-
-    unique_lines: list[str] = []
-    seen = set()
-    for candidate in candidates:
-        for line in candidate.splitlines():
-            compact = re.sub(r"\s+", " ", line).strip()
-            if len(compact) < 4 or compact in seen:
-                continue
-            seen.add(compact)
-            unique_lines.append(compact)
-    return "\n".join(unique_lines)
-
-
-def _extract_doc_text(raw: bytes) -> str:
-    for extractor in (_extract_doc_text_via_word, _extract_doc_text_via_antiword, _extract_doc_text_via_ole):
-        try:
-            text = extractor(raw)
-        except HTTPException:
-            raise
-        except Exception:
-            logger.debug("DOC extractor failed: %s", extractor.__name__, exc_info=True)
-            continue
-        if text:
-            return _ensure_non_empty_text(text, "DOC 文件未提取到可用文本内容")
-
-    raise HTTPException(status_code=422, detail="DOC 文件未提取到可用文本内容")
-
-
-def _extract_upload_text(file_name: str, raw: bytes) -> str:
-    """Extract plain text from supported upload types."""
-    ext = Path(file_name).suffix.lower()
-
-    if ext in {".txt", ".md"}:
-        return _ensure_non_empty_text(raw.decode("utf-8", errors="replace"), "文件未提取到可用文本内容")
-
-    if ext == ".pdf":
-        try:
-            from pypdf import PdfReader
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"PDF parser unavailable: {exc}") from exc
-
-        reader = PdfReader(io.BytesIO(raw))
-        text = "\n".join((page.extract_text() or "").strip() for page in reader.pages)
-        return _ensure_non_empty_text(text, "PDF 文件未提取到可用文本内容")
-
-    if ext == ".docx":
-        try:
-            from docx import Document
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"DOCX parser unavailable: {exc}") from exc
-
-        doc = Document(io.BytesIO(raw))
-        text = "\n".join((p.text or "").strip() for p in doc.paragraphs)
-        return _ensure_non_empty_text(text, "DOCX 文件未提取到可用文本内容")
-
-    if ext == ".doc":
-        return _extract_doc_text(raw)
-
-    if ext == ".xlsx":
-        return _extract_xlsx_text(raw)
-
-    if ext == ".xls":
-        return _extract_xls_text(raw)
-
-    raise HTTPException(
-        status_code=415,
-        detail="不支持的文件类型，仅支持 .txt .md .pdf .doc .docx .xls .xlsx",
-    )
 
 
 def _build_document_list_items(
@@ -455,7 +184,7 @@ async def similarity_search(
         return JSONResponse(status_code=422, content=e.error.model_dump())
     except Exception as e:
         logger.exception("Search failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=internal_error_detail(e))
 
 
 @router.post(
@@ -478,7 +207,7 @@ async def similar_case_compare(
         raise
     except Exception as e:
         logger.exception("Similar-case comparison failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=internal_error_detail(e))
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +234,7 @@ async def grounded_chat(
         return JSONResponse(status_code=422, content=e.error.model_dump())
     except Exception as e:
         logger.exception("Grounded chat failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=internal_error_detail(e))
 
 
 @router.post(
@@ -534,7 +263,7 @@ async def grounded_chat_stream(
         return JSONResponse(status_code=422, content=e.error.model_dump())
     except Exception as e:
         logger.exception("Grounded chat stream failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=internal_error_detail(e))
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +294,7 @@ async def ingest_document_endpoint(
         return result
     except Exception as e:
         logger.exception("Document ingestion failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=internal_error_detail(e))
 
 
 @router.post(
@@ -583,7 +312,7 @@ async def upload_document(
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    raw = await file.read()
+    raw = await read_upload_bytes(file)
     content = _extract_upload_text(file.filename, raw)
     result = ingest_document(
         db=db,
@@ -624,7 +353,7 @@ async def upload_template(
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    raw = await file.read()
+    raw = await read_upload_bytes(file)
     content = _extract_upload_text(file.filename, raw)
     result = ingest_document(
         db=db,
@@ -654,7 +383,7 @@ async def upload_session_file(
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    raw = await file.read()
+    raw = await read_upload_bytes(file)
     content = _extract_upload_text(file.filename, raw)
     return session_temp_file_store.add_file(
         session_id=session_id,
@@ -725,7 +454,7 @@ async def get_contract_review_template_recommendation(
         return recommend_templates_for_session(session_id=session_id, db=db)
     except Exception as exc:
         logger.exception("Template recommendation failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=internal_error_detail(exc)) from exc
 
 
 @router.post(
@@ -845,8 +574,8 @@ async def health_check():
 
     # Check Qdrant
     try:
-        import requests
-        resp = requests.get(f"http://{QDRANT_HOST}:{QDRANT_PORT}/healthz", timeout=3)
+        import httpx
+        resp = httpx.get(f"http://{QDRANT_HOST}:{QDRANT_PORT}/healthz", timeout=3)
         status.qdrant_ready = resp.status_code == 200
     except Exception:
         status.qdrant_ready = False
@@ -897,8 +626,16 @@ async def health_check():
 
 
 @router.post("/bootstrap")
-async def trigger_bootstrap():
-    """Manually trigger the bootstrap process."""
+async def trigger_bootstrap(request: Request):
+    """Manually trigger the bootstrap process. Requires API key if configured."""
+    import secrets as _secrets
+    if API_KEY:
+        presented = request.headers.get("x-api-key") or ""
+        if not presented and (auth := request.headers.get("authorization", "")):
+            if auth.lower().startswith("bearer "):
+                presented = auth[7:].strip()
+        if not _secrets.compare_digest(presented.encode(), API_KEY.encode()):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
     from app.core.config import run_bootstrap
     status = run_bootstrap()
     return status

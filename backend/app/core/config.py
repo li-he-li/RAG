@@ -1,6 +1,9 @@
 """
 Bootstrap and configuration management.
 Handles automatic provisioning of PostgreSQL, Qdrant, and embedding models.
+
+Configuration is validated via pydantic-settings at import time.
+Invalid env vars (e.g. PG_PORT=abc) produce a clear ValidationError.
 """
 
 from __future__ import annotations
@@ -10,11 +13,15 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from typing import Literal
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths (not from env – derived from file location)
 # ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # E:\fl app\backend
@@ -22,77 +29,190 @@ DATA_DIR = BASE_DIR / "data"
 DOCUMENTS_DIR = DATA_DIR / "documents"
 MODELS_CACHE_DIR = DATA_DIR / "models_cache"
 
-# ---------------------------------------------------------------------------
-# PostgreSQL config
-# ---------------------------------------------------------------------------
-
-PG_HOST = os.getenv("PG_HOST", "localhost")
-PG_PORT = int(os.getenv("PG_PORT", "5432"))
-PG_USER = os.getenv("PG_USER", "legalsearch")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "legalsearch")
-PG_DATABASE = os.getenv("PG_DATABASE", "legal_search")
-
-PG_DOCKER_NAME = "legal-search-postgres"
-PG_DOCKER_IMAGE = "postgres:16-alpine"
-
-DATABASE_URL = f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DATABASE}"
 
 # ---------------------------------------------------------------------------
-# Qdrant config
+# Typed Settings model
 # ---------------------------------------------------------------------------
 
-QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-QDRANT_DOCKER_NAME = "legal-search-qdrant"
-QDRANT_DOCKER_IMAGE = "qdrant/qdrant:latest"
+class Settings(BaseSettings):
+    """All runtime configuration, validated at import time."""
 
-# Collection names
-DOC_COLLECTION = "legal_documents"
-PARA_COLLECTION = "legal_paragraphs"
+    model_config = SettingsConfigDict(
+        env_file=str(BASE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",          # ignore unknown keys in .env
+        env_ignore_empty=False,
+    )
+
+    # -- PostgreSQL ----------------------------------------------------------
+    PG_HOST: str = "localhost"
+    PG_PORT: int = Field(default=5432, ge=1, le=65535)
+    PG_USER: str = "legalsearch"
+    PG_PASSWORD: str = "legalsearch"
+    PG_DATABASE: str = "legal_search"
+
+    PG_DOCKER_NAME: str = "legal-search-postgres"
+    PG_DOCKER_IMAGE: str = "postgres:16-alpine"
+
+    # -- Qdrant --------------------------------------------------------------
+    QDRANT_HOST: str = "localhost"
+    QDRANT_PORT: int = Field(default=6333, ge=1, le=65535)
+    QDRANT_DOCKER_NAME: str = "legal-search-qdrant"
+    QDRANT_DOCKER_IMAGE: str = "qdrant/qdrant:v1.13.4"
+
+    # Collection names
+    DOC_COLLECTION: str = "legal_documents"
+    PARA_COLLECTION: str = "legal_paragraphs"
+
+    # -- Embedding -----------------------------------------------------------
+    EMBEDDING_PROVIDER: Literal["google", "local"] = "google"
+    RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-v2-m3"
+    TORCH_DEVICE: str = "auto"
+
+    # Google Embedding
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_EMBEDDING_MODEL: str = "models/gemini-embedding-001"
+    EMBEDDING_DIMENSION: int = 768
+
+    # Local embedding (used only when EMBEDDING_PROVIDER=local)
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
+
+    # -- DeepSeek LLM -------------------------------------------------------
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+
+    # -- Server --------------------------------------------------------------
+    SERVER_HOST: str = "0.0.0.0"
+    SERVER_PORT: int = Field(default=8000, ge=1, le=65535)
+    DEBUG: bool = False
+
+    # -- HTTP security -------------------------------------------------------
+    API_KEY: str = ""
+    MAX_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, ge=1024)
+    RATE_LIMIT_PER_MINUTE: int = Field(default=120, ge=0)
+    MAX_JSON_BODY_BYTES: int = Field(default=8 * 1024 * 1024, ge=1024)
+    TRUSTED_HOSTS_RAW: str = Field(default="", alias="TRUSTED_HOSTS")
+
+    # -- CORS ----------------------------------------------------------------
+    CORS_ALLOW_ORIGINS_RAW: str = Field(default="", alias="CORS_ALLOW_ORIGINS")
+    CORS_ALLOW_CREDENTIALS: bool = True
+
+    # -- Retrieval rollout ---------------------------------------------------
+    RETRIEVAL_ROLLOUT_STAGE: Literal["document_only", "dual_no_explain", "dual_full"] = "dual_full"
+    RETRIEVAL_ENABLE_FALLBACK: bool = True
+
+    # -- Validation ----------------------------------------------------------
+
+    @field_validator("TORCH_DEVICE", mode="before")
+    @classmethod
+    def _normalize_torch_device(cls, v: str) -> str:
+        return v.strip().lower()
+
 
 # ---------------------------------------------------------------------------
-# Embedding model config
+# Singleton instance (validates at import time)
 # ---------------------------------------------------------------------------
 
-EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "google")  # "google" or "local"
-RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
-TORCH_DEVICE = os.getenv("TORCH_DEVICE", "auto").strip().lower()
+_settings = Settings()
 
-# Google Embedding config
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GOOGLE_EMBEDDING_MODEL = os.getenv("GOOGLE_EMBEDDING_MODEL", "models/gemini-embedding-001")
-EMBEDDING_DIMENSION = 768  # gemini-embedding-001 with output_dimensionality=768
+# Re-export individual values so existing `from app.core.config import X` works.
+PG_HOST = _settings.PG_HOST
+PG_PORT = _settings.PG_PORT
+PG_USER = _settings.PG_USER
+PG_PASSWORD = _settings.PG_PASSWORD
+PG_DATABASE = _settings.PG_DATABASE
+PG_DOCKER_NAME = _settings.PG_DOCKER_NAME
+PG_DOCKER_IMAGE = _settings.PG_DOCKER_IMAGE
+
+DATABASE_URL = (
+    f"postgresql://{_settings.PG_USER}:{_settings.PG_PASSWORD}"
+    f"@{_settings.PG_HOST}:{_settings.PG_PORT}/{_settings.PG_DATABASE}"
+)
+
+QDRANT_HOST = _settings.QDRANT_HOST
+QDRANT_PORT = _settings.QDRANT_PORT
+QDRANT_DOCKER_NAME = _settings.QDRANT_DOCKER_NAME
+QDRANT_DOCKER_IMAGE = _settings.QDRANT_DOCKER_IMAGE
+DOC_COLLECTION = _settings.DOC_COLLECTION
+PARA_COLLECTION = _settings.PARA_COLLECTION
+
+EMBEDDING_PROVIDER = _settings.EMBEDDING_PROVIDER
+RERANKER_MODEL_NAME = _settings.RERANKER_MODEL_NAME
+TORCH_DEVICE = _settings.TORCH_DEVICE
+GOOGLE_API_KEY = _settings.GOOGLE_API_KEY
+GOOGLE_EMBEDDING_MODEL = _settings.GOOGLE_EMBEDDING_MODEL
+EMBEDDING_DIMENSION = _settings.EMBEDDING_DIMENSION
+EMBEDDING_MODEL_NAME = _settings.EMBEDDING_MODEL_NAME
+
+DEEPSEEK_API_KEY = _settings.DEEPSEEK_API_KEY
+DEEPSEEK_BASE_URL = _settings.DEEPSEEK_BASE_URL
+DEEPSEEK_MODEL = _settings.DEEPSEEK_MODEL
+
+SERVER_HOST = _settings.SERVER_HOST
+SERVER_PORT = _settings.SERVER_PORT
+DEBUG = _settings.DEBUG
+
+API_KEY = _settings.API_KEY
+MAX_UPLOAD_BYTES = _settings.MAX_UPLOAD_BYTES
+RATE_LIMIT_PER_MINUTE = _settings.RATE_LIMIT_PER_MINUTE
+MAX_JSON_BODY_BYTES = _settings.MAX_JSON_BODY_BYTES
+TRUSTED_HOSTS = [h.strip() for h in _settings.TRUSTED_HOSTS_RAW.split(",") if h.strip()]
+
+RETRIEVAL_ROLLOUT_STAGE = _settings.RETRIEVAL_ROLLOUT_STAGE
+RETRIEVAL_ENABLE_FALLBACK = _settings.RETRIEVAL_ENABLE_FALLBACK
+
 
 # ---------------------------------------------------------------------------
-# DeepSeek LLM config (for match explanation generation)
+# CORS helper
 # ---------------------------------------------------------------------------
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-58ec91886fa144998d036de19412cc13")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+def get_cors_middleware_kwargs() -> dict:
+    """Build Starlette CORSMiddleware kwargs; avoids allow_credentials=True with allow_origins=['*']."""
+    raw = _settings.CORS_ALLOW_ORIGINS_RAW.strip()
+    if not raw:
+        allow_origins = [
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3000",
+            "http://127.0.0.1:5500",
+            "http://localhost:5500",
+        ]
+        return {
+            "allow_origins": allow_origins,
+            "allow_credentials": True,
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
+        }
+    if raw == "*":
+        return {
+            "allow_origins": ["*"],
+            "allow_credentials": False,
+            "allow_methods": ["*"],
+            "allow_headers": ["*"],
+        }
+    allow_origins = [x.strip() for x in raw.split(",") if x.strip()]
+    return {
+        "allow_origins": allow_origins,
+        "allow_credentials": _settings.CORS_ALLOW_CREDENTIALS,
+        "allow_methods": ["*"],
+        "allow_headers": ["*"],
+    }
+
+
+def warn_insecure_defaults() -> None:
+    """Log once per process if dangerous defaults are in use."""
+    if PG_PASSWORD == "legalsearch":
+        logger.warning(
+            "PG_PASSWORD is still the default 'legalsearch'. "
+            "Set a strong password and restrict database network access for production."
+        )
+
 
 # ---------------------------------------------------------------------------
-# Server config
+# Torch device helpers
 # ---------------------------------------------------------------------------
-
-SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
-SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
-
-# ---------------------------------------------------------------------------
-# Retrieval rollout / fallback config
-# ---------------------------------------------------------------------------
-
-
-def _as_bool(value: str, default: bool) -> bool:
-    if value is None:
-        return default
-    value = value.strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return default
-
 
 def torch_cuda_available() -> bool:
     """Return whether the current runtime can use CUDA."""
@@ -105,26 +225,18 @@ def torch_cuda_available() -> bool:
 
 def resolve_torch_device() -> str:
     """Resolve the runtime device for local model inference."""
-    if TORCH_DEVICE not in {"auto", "cpu", "cuda", "cuda:0"}:
+    device = TORCH_DEVICE
+    if device not in {"auto", "cpu", "cuda", "cuda:0"}:
         return "cuda:0" if torch_cuda_available() else "cpu"
-    if TORCH_DEVICE == "cpu":
+    if device == "cpu":
         return "cpu"
-    if TORCH_DEVICE in {"cuda", "cuda:0"}:
-        return "cuda:0" if torch_cuda_available() else "cpu"
     return "cuda:0" if torch_cuda_available() else "cpu"
 
 
-_ROLLOUT_ALLOWED_STAGES = {"document_only", "dual_no_explain", "dual_full"}
-RETRIEVAL_ROLLOUT_STAGE = os.getenv("RETRIEVAL_ROLLOUT_STAGE", "dual_full").strip().lower()
-if RETRIEVAL_ROLLOUT_STAGE not in _ROLLOUT_ALLOWED_STAGES:
-    RETRIEVAL_ROLLOUT_STAGE = "dual_full"
+# ---------------------------------------------------------------------------
+# Bootstrap status tracking
+# ---------------------------------------------------------------------------
 
-RETRIEVAL_ENABLE_FALLBACK = _as_bool(
-    os.getenv("RETRIEVAL_ENABLE_FALLBACK", "true"),
-    default=True,
-)
-
-# Runtime bootstrap status cache (updated by run_bootstrap).
 _BOOTSTRAP_STATUS: dict[str, bool] = {
     "postgresql_ready": False,
     "qdrant_ready": False,
@@ -149,6 +261,10 @@ def get_bootstrap_missing_components() -> list[str]:
     ]
     return [name for key, name in mapping if not _BOOTSTRAP_STATUS.get(key, False)]
 
+
+# ---------------------------------------------------------------------------
+# Docker / Bootstrap helpers
+# ---------------------------------------------------------------------------
 
 def _docker_is_running() -> bool:
     """Check if Docker daemon is accessible."""
@@ -296,10 +412,10 @@ def bootstrap_qdrant() -> bool:
 
     # Wait for Qdrant to be ready
     logger.info("Waiting for Qdrant to be ready...")
-    import requests
+    import httpx
     for _ in range(30):
         try:
-            resp = requests.get(f"http://{QDRANT_HOST}:{QDRANT_PORT}/healthz")
+            resp = httpx.get(f"http://{QDRANT_HOST}:{QDRANT_PORT}/healthz", timeout=3)
             if resp.status_code == 200:
                 logger.info("Qdrant is ready.")
                 return True
@@ -346,10 +462,9 @@ def _bootstrap_google_embedding() -> bool:
 def _bootstrap_local_embedding() -> bool:
     """Download and cache the local embedding model."""
     try:
-        local_model_name = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
         from sentence_transformers import SentenceTransformer
-        local_snapshot = _resolve_local_model_snapshot(local_model_name)
-        model_source = str(local_snapshot) if local_snapshot else local_model_name
+        local_snapshot = _resolve_local_model_snapshot(EMBEDDING_MODEL_NAME)
+        model_source = str(local_snapshot) if local_snapshot else EMBEDDING_MODEL_NAME
         logger.info("Loading embedding model '%s'...", model_source)
         model = SentenceTransformer(
             model_source,

@@ -22,10 +22,16 @@ from app.core.config import (
 
 logger = logging.getLogger(__name__)
 
+# Shared singleton — one HTTP connection pool instead of one per call
+_client: QdrantClient | None = None
+
 
 def get_qdrant_client() -> QdrantClient:
-    """Return a Qdrant client instance."""
-    return QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    """Return a shared Qdrant client instance (singleton)."""
+    global _client
+    if _client is None:
+        _client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    return _client
 
 
 def init_collections(client: Optional[QdrantClient] = None) -> None:
@@ -37,7 +43,8 @@ def init_collections(client: Optional[QdrantClient] = None) -> None:
         try:
             client.get_collection(name)
             logger.info(f"Collection '{name}' already exists.")
-        except Exception:
+        except Exception as exc:
+            logger.info("Collection '%s' not found, creating: %s", name, exc)
             client.create_collection(
                 collection_name=name,
                 vectors_config=models.VectorParams(
@@ -56,7 +63,7 @@ def init_collections(client: Optional[QdrantClient] = None) -> None:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
         except Exception:
-            pass  # Index may already exist
+            logger.debug("Index 'doc_id' on '%s' may already exist", name)
 
     try:
         client.create_payload_index(
@@ -65,7 +72,7 @@ def init_collections(client: Optional[QdrantClient] = None) -> None:
             field_schema=models.PayloadSchemaType.KEYWORD,
         )
     except Exception:
-        pass
+        logger.debug("Index 'dispute_tags' on '%s' may already exist", PARA_COLLECTION)
 
 
 def upsert_document_vector(

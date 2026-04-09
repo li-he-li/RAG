@@ -73,9 +73,13 @@ def extract_evidence_snippet(
     doc_id: str,
     line_start: int,
     line_end: int,
+    doc_cache: dict[str, DocumentTable] | None = None,
 ) -> str:
     """Extract a text snippet from stored normalized document content."""
-    doc = db.query(DocumentTable).filter_by(doc_id=doc_id).first()
+    if doc_cache and doc_id in doc_cache:
+        doc = doc_cache[doc_id]
+    else:
+        doc = db.query(DocumentTable).filter_by(doc_id=doc_id).first()
     if not doc or not doc.normalized_content:
         return ""
 
@@ -90,9 +94,13 @@ def check_version_consistency(
     db: Session,
     doc_id: str,
     claimed_version_id: str,
+    doc_cache: dict[str, DocumentTable] | None = None,
 ) -> Optional[str]:
     """Check if claimed version matches current document version."""
-    doc = db.query(DocumentTable).filter_by(doc_id=doc_id).first()
+    if doc_cache and doc_id in doc_cache:
+        doc = doc_cache[doc_id]
+    else:
+        doc = db.query(DocumentTable).filter_by(doc_id=doc_id).first()
     if not doc:
         return f"Document {doc_id} not found"
 
@@ -116,7 +124,22 @@ def validate_and_enrich_results(
     - document-level source metadata is present
     - paragraph-level citation metadata is present
     - citation line range can be resolved to snippet text
+
+    Uses batched DB lookups (1 query per unique doc_id) instead of
+    N+1 individual queries.
     """
+    # Batch-load all referenced documents in a single query
+    all_doc_ids: set[str] = set()
+    for doc in results:
+        all_doc_ids.add(doc.doc_id)
+        for para in doc.paragraphs:
+            all_doc_ids.add(para.doc_id)
+
+    doc_rows = db.query(DocumentTable).filter(
+        DocumentTable.doc_id.in_(all_doc_ids)
+    ).all()
+    doc_cache: dict[str, DocumentTable] = {r.doc_id: r for r in doc_rows}
+
     for doc in results:
         metadata_error = validate_document_source_metadata(doc)
         if metadata_error:
@@ -131,7 +154,8 @@ def validate_and_enrich_results(
 
             if not para.snippet:
                 para.snippet = extract_evidence_snippet(
-                    db, para.doc_id, para.line_start, para.line_end
+                    db, para.doc_id, para.line_start, para.line_end,
+                    doc_cache=doc_cache,
                 )
 
             if not para.snippet or not para.snippet.strip():
@@ -147,7 +171,10 @@ def validate_and_enrich_results(
                 logger.error(unresolved.detail)
                 raise TraceabilityValidationError(unresolved)
 
-            warning = check_version_consistency(db, para.doc_id, para.citation.version_id)
+            warning = check_version_consistency(
+                db, para.doc_id, para.citation.version_id,
+                doc_cache=doc_cache,
+            )
             if warning:
                 if warning.startswith("Document "):
                     unresolved = ErrorResponse(

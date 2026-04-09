@@ -193,8 +193,8 @@ def rank_and_aggregate(
         try:
             reranked = rerank(query, candidate_texts, top_k=None)
             rerank_score_by_index = {idx: float(score) for idx, score in reranked}
-        except Exception:
-            # Fallback to vector score if reranker fails.
+        except Exception as exc:
+            logger.warning("Reranker failed, falling back to vector scores: %s", exc)
             rerank_score_by_index = {}
 
     scored_by_doc: dict[str, list[tuple[float, object, str]]] = {}
@@ -272,9 +272,9 @@ async def generate_explanations(
 ) -> list[DocumentResult]:
     """Generate match explanations for each paragraph using DeepSeek V3 API.
 
-    For each paragraph evidence hit, calls the DeepSeek API to produce
-    a human-readable explanation of why the paragraph matches the query.
+    Uses concurrent requests (up to 4) instead of sequential calls.
     """
+    import asyncio
     import httpx
 
     if not DEEPSEEK_API_KEY:
@@ -291,51 +291,58 @@ async def generate_explanations(
         "要求：用中文回答，1-3句话，直接说明相关性，不要多余寒暄。"
     )
 
+    fallback_explanation = "该段落与查询「{query}」在语义上高度相关（相似度: {score:.2f}）"
+
+    # Collect all tasks
+    async def _explain_one(client: httpx.AsyncClient, para: ParagraphEvidence) -> None:
+        try:
+            user_message = (
+                f"查询：{query}\n\n"
+                f"匹配段落（来源: {para.citation.file_name}, "
+                f"第{para.citation.line_start}-{para.citation.line_end}行）：\n"
+                f"{para.snippet}\n\n"
+                f"请简要说明该段落与查询的相关性。"
+            )
+            resp = await client.post(
+                f"{DEEPSEEK_BASE_URL}/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": DEEPSEEK_MODEL,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.3,
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                para.match_explanation = data["choices"][0]["message"]["content"].strip()
+            else:
+                logger.warning("DeepSeek explanation API returned %s", resp.status_code)
+                para.match_explanation = fallback_explanation.format(query=query, score=para.similarity_score)
+        except Exception as e:
+            logger.warning("DeepSeek API call failed: %s", e)
+            para.match_explanation = fallback_explanation.format(query=query, score=para.similarity_score)
+
+    # Gather all paragraphs
+    tasks: list = []
     async with httpx.AsyncClient(timeout=30.0) as client:
         for doc in results:
             for para in doc.paragraphs:
-                try:
-                    user_message = (
-                        f"查询：{query}\n\n"
-                        f"匹配段落（来源: {para.citation.file_name}, "
-                        f"第{para.citation.line_start}-{para.citation.line_end}行）：\n"
-                        f"{para.snippet}\n\n"
-                        f"请简要说明该段落与查询的相关性。"
-                    )
-                    resp = await client.post(
-                        f"{DEEPSEEK_BASE_URL}/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "model": DEEPSEEK_MODEL,
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": user_message},
-                            ],
-                            "max_tokens": 200,
-                            "temperature": 0.3,
-                        },
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        explanation = data["choices"][0]["message"]["content"].strip()
-                        para.match_explanation = explanation
-                    else:
-                        logger.warning(
-                            f"DeepSeek API returned {resp.status_code}: {resp.text[:200]}"
-                        )
-                        para.match_explanation = (
-                            f"该段落与查询「{query}」在语义上高度相关"
-                            f"（相似度: {para.similarity_score:.2f}）"
-                        )
-                except Exception as e:
-                    logger.warning(f"DeepSeek API call failed: {e}")
-                    para.match_explanation = (
-                        f"该段落与查询「{query}」在语义上高度相关"
-                        f"（相似度: {para.similarity_score:.2f}）"
-                    )
+                tasks.append(_explain_one(client, para))
+        # Run up to 4 concurrently
+        semaphore = asyncio.Semaphore(4)
+
+        async def _bounded(task_coro):
+            async with semaphore:
+                await task_coro
+
+        await asyncio.gather(*[_bounded(t) for t in tasks])
 
     return results
 

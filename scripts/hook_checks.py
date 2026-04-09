@@ -23,6 +23,18 @@ CONVENTIONAL_COMMIT_RE = re.compile(
     r"^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)"
     r"(\([a-z0-9._/-]+\))?: .+"
 )
+CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+COMMENT_CHECK_EXTS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".css",
+    ".html",
+    ".sh",
+    ".ps1",
+}
 
 
 def run_git(*args: str) -> str:
@@ -122,11 +134,65 @@ def validate_repo_files() -> None:
         fail("Repository is missing required project files: " + ", ".join(missing))
 
 
+def _extract_comment_payload(rel_path: Path, line: str) -> str | None:
+    suffix = rel_path.suffix.lower()
+    stripped = line.lstrip()
+
+    if suffix in {".py", ".sh", ".ps1"}:
+        if stripped.startswith("#") and not stripped.startswith("#!"):
+            return stripped[1:].strip()
+        return None
+
+    if suffix in {".js", ".jsx", ".ts", ".tsx", ".css"}:
+        if stripped.startswith("//"):
+            return stripped[2:].strip()
+        if stripped.startswith("/*"):
+            return stripped[2:].split("*/", 1)[0].strip()
+        if stripped.startswith("*"):
+            return stripped[1:].strip()
+        return None
+
+    if suffix == ".html" and "<!--" in stripped:
+        return stripped.split("<!--", 1)[1].split("-->", 1)[0].strip()
+
+    return None
+
+
+def validate_comment_language(files: list[Path]) -> None:
+    comment_language = os.getenv("COMMENT_LANGUAGE", "en").strip().lower()
+    if comment_language not in {"en", "english"}:
+        return
+
+    violations = []
+    for rel_path in files:
+        if rel_path.suffix.lower() not in COMMENT_CHECK_EXTS:
+            continue
+
+        file_path = ROOT / rel_path
+        if not file_path.exists() or not file_path.is_file():
+            continue
+
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        for line_no, line in enumerate(content.splitlines(), start=1):
+            payload = _extract_comment_payload(rel_path, line)
+            if not payload or not CJK_RE.search(payload):
+                continue
+            snippet = payload if len(payload) <= 80 else (payload[:77] + "...")
+            violations.append(f"{rel_path}:{line_no}: {snippet}")
+
+    if violations:
+        fail(
+            "Comment language policy violation (expected English comments):\n- "
+            + "\n- ".join(violations)
+        )
+
+
 def run_pre_commit() -> None:
     files = staged_files()
     ensure_no_forbidden_files(files)
     compile_python(files)
     validate_json(files)
+    validate_comment_language(files)
 
 
 def run_pre_push() -> None:
@@ -145,6 +211,15 @@ def run_pre_push() -> None:
         if "models_cache" not in path.parts and "__pycache__" not in path.parts
     ]
     validate_json(json_files)
+    comment_files = [
+        path.relative_to(ROOT)
+        for folder in ("backend", "frontend", "scripts")
+        for path in (ROOT / folder).rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in COMMENT_CHECK_EXTS
+        and "__pycache__" not in path.parts
+    ]
+    validate_comment_language(comment_files)
 
 
 def main(argv: list[str]) -> None:
