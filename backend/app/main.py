@@ -31,6 +31,7 @@ from app.services.analytics.middleware import CorrelationIdMiddleware
 from app.core.database import init_db
 from app.routers.prediction import router as prediction_router
 from app.routers.search import router as search_router
+from app.routers.trajectory import router as trajectory_router
 from app.agents.robustness import (
     DirtyStateCleaner,
     RobustnessManager,
@@ -108,6 +109,7 @@ if TRUSTED_HOSTS:
 # Include routers — versioned prefix (/api/v1/*) is canonical
 app.include_router(search_router, prefix="/api/v1")
 app.include_router(prediction_router, prefix="/api/v1")
+app.include_router(trajectory_router, prefix="/api/v1")
 
 # Backward-compatible unversioned mount (remove after all clients migrated)
 app.include_router(search_router, prefix="/api")

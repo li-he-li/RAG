@@ -102,15 +102,15 @@
 
 ## 11. 轨迹记录 (Compounding) — 在业务域迁移前就绪，为后续优化积累数据
 
-- [ ] 11.1 创建目录结构：`backend/app/services/trajectory/`、`backend/app/services/trajectory/__init__.py`
-- [ ] 11.2 TDD: 编写 `tests/test_trajectory.py` — 测试轨迹记录、查询、回放、脱敏
-- [ ] 11.3 创建数据库表：`agent_trajectory` — session_id, agent_name, step_type, input_hash, output, duration_ms, token_usage, prompt_versions
-- [ ] 11.4 实现 TrajectoryLogger：`backend/app/services/trajectory/logger.py` — 异步写入、不阻塞主流程
-- [ ] 11.5 实现轨迹数据治理：默认脱敏/hash、全文显式开关、TTL retention cleanup
-- [ ] 11.6 将 prompt version 快照写入 trajectory 记录，确保 replay 可追溯
-- [ ] 11.7 集成到 AgentPipeline：每个 agent step 自动记录轨迹
-- [ ] 11.8 添加查询 API：`GET /api/v1/trajectories/{session_id}`
-- [ ] 11.9 运行测试确认通过 → commit: `feat(trajectory): add structured trajectory logging with data governance`
+- [x] 11.1 创建目录结构：`backend/app/services/trajectory/`、`backend/app/services/trajectory/__init__.py`
+- [x] 11.2 TDD: 编写 `tests/test_trajectory.py` — 测试轨迹记录、查询、回放、脱敏
+- [x] 11.3 创建数据库表：`agent_trajectory` — session_id, agent_name, step_type, input_hash, output, duration_ms, token_usage, prompt_versions
+- [x] 11.4 实现 TrajectoryLogger：`backend/app/services/trajectory/logger.py` — 异步写入、不阻塞主流程
+- [x] 11.5 实现轨迹数据治理：默认脱敏/hash、全文显式开关、TTL retention cleanup
+- [x] 11.6 将 prompt version 快照写入 trajectory 记录，确保 replay 可追溯
+- [x] 11.7 集成到 AgentPipeline：每个 agent step 自动记录轨迹
+- [x] 11.8 添加查询 API：`GET /api/v1/trajectories/{session_id}`
+- [x] 11.9 运行测试确认通过 → commit: `feat(trajectory): add structured trajectory logging with data governance`
 
 ## 12. 类案搜索 Agent (Effective)
 

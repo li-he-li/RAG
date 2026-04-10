@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fastapi.testclient import TestClient
+
 from app.agents.base import (
     ExecutionPlan,
     ExecutorAgent,
@@ -528,3 +530,140 @@ class TestPipelineTrajectoryIntegration:
 
         records = traj_logger.records
         assert records[0]["prompt_versions"] == {"chat": "1.2.0", "retrieval": "2.0.0"}
+
+
+# ---------------------------------------------------------------------------
+# Trajectory Store — DB persistence layer
+# ---------------------------------------------------------------------------
+
+
+class TestTrajectoryStore:
+    """Test TrajectoryStore persists and queries records via SQLAlchemy."""
+
+    def test_store_persists_record_to_db(self) -> None:
+        from app.services.trajectory.store import TrajectoryStore, InMemoryTrajectoryStore
+
+        store = InMemoryTrajectoryStore()
+        store.save(
+            session_id="sess-store-1",
+            agent_name="executor",
+            step_type="execute",
+            input_hash="abc123",
+            output={"result": "done"},
+            duration_ms=50.0,
+            token_usage={"prompt": 100, "completion": 50},
+            prompt_versions={"chat": "1.0.0"},
+        )
+
+        records = store.query_by_session("sess-store-1")
+        assert len(records) == 1
+        assert records[0]["session_id"] == "sess-store-1"
+        assert records[0]["agent_name"] == "executor"
+        assert records[0]["output"] == {"result": "done"}
+
+    def test_store_query_returns_empty_for_unknown_session(self) -> None:
+        from app.services.trajectory.store import InMemoryTrajectoryStore
+
+        store = InMemoryTrajectoryStore()
+        assert store.query_by_session("nonexistent") == []
+
+    def test_store_query_preserves_order(self) -> None:
+        from app.services.trajectory.store import InMemoryTrajectoryStore
+
+        store = InMemoryTrajectoryStore()
+        for i, name in enumerate(["planner", "executor", "validator"]):
+            store.save(
+                session_id="sess-order",
+                agent_name=name,
+                step_type="step",
+                input_hash=f"hash_{i}",
+                output={"i": i},
+                duration_ms=float(i),
+            )
+
+        records = store.query_by_session("sess-order")
+        assert [r["agent_name"] for r in records] == ["planner", "executor", "validator"]
+
+    def test_store_cleanup_removes_expired(self) -> None:
+        from app.services.trajectory.store import InMemoryTrajectoryStore
+
+        store = InMemoryTrajectoryStore()
+        store.save("sess-old", "exe", "execute", "h", {}, 10.0)
+        # Backdate the record (store uses ISO string)
+        store._records[0]["created_at"] = (
+            datetime.now(UTC) - timedelta(days=31)
+        ).isoformat()
+
+        removed = store.cleanup_expired(ttl_days=30)
+        assert removed == 1
+        assert store.query_by_session("sess-old") == []
+
+
+# ---------------------------------------------------------------------------
+# Trajectory API endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestTrajectoryAPI:
+    """Test GET /api/v1/trajectories/{session_id} endpoint."""
+
+    def _create_app(self):
+        """Create a test FastAPI app with trajectory router."""
+        from fastapi import FastAPI
+        from app.routers.trajectory import router as trajectory_router
+        from app.services.trajectory.store import InMemoryTrajectoryStore
+
+        app = FastAPI()
+        store = InMemoryTrajectoryStore()
+        # Seed some data
+        store.save("sess-api-1", "planner", "plan", "h1", {"plan": "step1"}, 50.0,
+                    token_usage={"prompt": 100}, prompt_versions={"chat": "1.0.0"})
+        store.save("sess-api-1", "executor", "execute", "h2", {"result": "data"}, 100.0,
+                    token_usage={"prompt": 200, "completion": 50})
+        store.save("sess-api-2", "executor", "execute", "h3", {"result": "other"}, 30.0)
+
+        # Override the store dependency
+        from app.routers.trajectory import get_trajectory_store
+        app.dependency_overrides[get_trajectory_store] = lambda: store
+        app.include_router(trajectory_router, prefix="/api/v1")
+        return app
+
+    def test_get_trajectories_returns_records(self) -> None:
+        app = self._create_app()
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/trajectories/sess-api-1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["agent_name"] == "planner"
+        assert data[1]["agent_name"] == "executor"
+
+    def test_get_trajectories_includes_all_fields(self) -> None:
+        app = self._create_app()
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/trajectories/sess-api-1")
+        record = resp.json()[0]
+        for field in ("session_id", "agent_name", "step_type", "input_hash",
+                       "output", "duration_ms", "token_usage", "created_at"):
+            assert field in record, f"missing field: {field}"
+
+    def test_get_trajectories_empty_session_returns_200(self) -> None:
+        app = self._create_app()
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/trajectories/nonexistent")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_get_trajectories_replay_endpoint(self) -> None:
+        app = self._create_app()
+        client = TestClient(app)
+
+        resp = client.get("/api/v1/trajectories/sess-api-1/replay")
+        assert resp.status_code == 200
+        replay = resp.json()
+        assert replay["session_id"] == "sess-api-1"
+        assert replay["step_count"] == 2
+        assert replay["status"] == "completed"
