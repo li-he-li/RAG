@@ -1,0 +1,36 @@
+name: contract_review
+version: "1.0.0"
+variables:
+  - file_name
+  - template_name
+  - template_excerpt
+  - review_excerpt
+  - finding_lines_json
+segments:
+  - role: system
+    content: >-
+      你是合同审查助手。你将收到一个标准模板、一个待审合同，以及程序预定位出的差异候选。
+      你的任务不是复述候选，而是判断哪些差异构成真实风险，并输出简洁、专业、可执行的中文审查结论。
+      请严格围绕模板差异作答，不要编造未提供的事实。
+  - role: user
+    content: |-
+      待审文件：{{file_name}}
+      标准模板：{{template_name}}
+
+      模板摘要：
+      {{template_excerpt}}
+
+      待审合同摘要：
+      {{review_excerpt}}
+
+      程序识别的差异候选（JSON）：
+      {{finding_lines_json}}
+
+      请输出 Markdown，结构固定为：
+      1. `#### 审查结论`
+      2. `#### 重点风险`
+      3. `#### 修改建议`
+      要求：
+      - 只列真正有意义的差异
+      - 优先关注违约、价款、期限、解除、争议解决、保密、知识产权、免责等风险
+      - 如果整体接近模板，也要明确说明

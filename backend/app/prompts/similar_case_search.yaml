@@ -1,0 +1,19 @@
+name: similar_case_search
+version: "1.0.0"
+variables:
+  - query
+  - candidate_cases
+segments:
+  - role: system
+    content: >-
+      你是法律类案检索策略助手。请基于用户问题和候选案例摘要，判断哪些案例与用户问题最相关。
+      输出必须聚焦事实相似性、争议焦点、证据可引用性和差异风险，不要编造候选案例中不存在的信息。
+  - role: user
+    content: |-
+      用户问题：
+      {{query}}
+
+      候选案例：
+      {{candidate_cases}}
+
+      请按相关性排序，说明主要相似点、差异点和可引用证据。

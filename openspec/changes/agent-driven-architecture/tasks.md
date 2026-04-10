@@ -15,18 +15,18 @@
 
 ## 3. Prompt 注册表 (Updatable)
 
-- [ ] 3.1 TDD: 编写 `tests/test_prompt_registry.py` — 测试 YAML 加载、变量替换、版本追踪、请求级 pinning
-- [ ] 3.2 实现基础 PromptRegistry：`backend/app/prompts/registry.py` — YAML 加载、`{{var}}` 替换、版本号
-- [ ] 3.3 从现有代码中提取所有 prompt 到 YAML 文件：
+- [x] 3.1 TDD: 编写 `tests/test_prompt_registry.py` — 测试 YAML 加载、变量替换、版本追踪、请求级 pinning
+- [x] 3.2 实现基础 PromptRegistry：`backend/app/prompts/registry.py` — YAML 加载、`{{var}}` 替换、版本号
+- [x] 3.3 从现有代码中提取所有 prompt 到 YAML 文件：
   - `backend/app/prompts/similar_case_search.yaml`
   - `backend/app/prompts/contract_review.yaml`
   - `backend/app/prompts/opponent_prediction.yaml`
   - `backend/app/prompts/chat.yaml`
   - `backend/app/prompts/retrieval_explanation.yaml`
-- [ ] 3.4 实现热加载：使用 watchfiles 监控 prompts 目录，文件变更时自动重新加载模板
-- [ ] 3.5 实现请求级 prompt version pinning：单次请求生命周期内锁定 resolved prompt versions
-- [ ] 3.6 将 prompt name/version 快照暴露给后续 trajectory / replay 服务
-- [ ] 3.7 运行测试确认通过 → commit: `feat(prompts): extract prompts to YAML with hot-reload and version pinning`
+- [x] 3.4 实现热加载：使用 watchfiles 监控 prompts 目录，文件变更时自动重新加载模板
+- [x] 3.5 实现请求级 prompt version pinning：单次请求生命周期内锁定 resolved prompt versions
+- [x] 3.6 将 prompt name/version 快照暴露给后续 trajectory / replay 服务
+- [x] 3.7 运行测试确认通过 → commit: `feat(prompts): extract prompts to YAML with hot-reload and version pinning`
 
 ## 4. Token 预算系统 (Efficient)
 
