@@ -123,13 +123,13 @@
 
 ## 13. 合同审查 Agent (Effective)
 
-- [ ] 13.1 TDD: 编写 `tests/test_agent_contract_review.py` — 测试规划、执行、验证、streaming、API 契约兼容
-- [ ] 13.2 实现 ContractReviewPlanner：条款分割策略、模板匹配
-- [ ] 13.3 实现 ContractReviewExecutor：差异分析 + LLM 审查（streaming）
-- [ ] 13.4 实现 ContractReviewValidator：findings 一致性校验
-- [ ] 13.5 组装全链路 pipeline：`[Planner → Executor → Validator]` 拓扑
-- [ ] 13.6 修改 search router：`/api/v1/contract-review/stream` 改为通过 agent pipeline + CompatibilityAdapter
-- [ ] 13.7 运行 golden snapshot contract test 确认 streaming 格式兼容 → commit: `feat(agents): contract review agent pipeline`
+- [x] 13.1 TDD: 编写 `tests/test_agent_contract_review.py` — 测试规划、执行、验证、streaming、API 契约兼容
+- [x] 13.2 实现 ContractReviewPlanner：条款分割策略、模板匹配
+- [x] 13.3 实现 ContractReviewExecutor：差异分析 + LLM 审查（streaming）
+- [x] 13.4 实现 ContractReviewValidator：findings 一致性校验
+- [x] 13.5 组装全链路 pipeline：`[Planner → Executor → Validator]` 拓扑
+- [x] 13.6 修改 search router：`/api/v1/contract-review/stream` 改为通过 agent pipeline + CompatibilityAdapter
+- [x] 13.7 运行 golden snapshot contract test 确认 streaming 格式兼容 → commit: `feat(agents): contract review agent pipeline`
 
 ## 14. 观点预测 Agent (Effective)
 

@@ -481,7 +481,7 @@ async def contract_review_stream(
     request: ContractReviewRequest,
     db: Session = Depends(get_session),
 ):
-    """Stream contract review output against the selected standard template."""
+    """Stream contract review output via agent pipeline."""
     session_id = request.session_id.strip()
     template_id = request.template_id.strip()
     query = request.query.strip()
@@ -493,13 +493,17 @@ async def contract_review_stream(
     if not query:
         raise HTTPException(status_code=400, detail="query is required")
 
+    # Use agent pipeline for streaming
+    from app.agents.contract_review import create_contract_review_pipeline
+    pipeline = create_contract_review_pipeline()
+
     return StreamingResponse(
-        stream_template_difference_review(
-            session_id=session_id,
-            template_id=template_id,
-            query=query,
-            db=db,
-        ),
+        pipeline.stream({
+            "session_id": session_id,
+            "template_id": template_id,
+            "query": query,
+            "db": db,
+        }),
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache",
