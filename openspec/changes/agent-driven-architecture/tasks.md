@@ -30,11 +30,11 @@
 
 ## 4. Token 预算系统 (Efficient)
 
-- [ ] 4.1 TDD: 编写 `tests/test_token_budget.py` — 测试 token 计数、预算分配、缓存、自适应校准
-- [ ] 4.2 实现 TokenBudgetManager：`backend/app/services/analytics/token_budget.py` — tiktoken 计数（cl100k_base）、预算分配（system/retrieval_context/generation）、LRU 缓存
-- [ ] 4.3 安全裕度设为 25%，实现自适应校准：记录 actual vs estimated 比值，偏差 >15% 时自动调整校准系数
-- [ ] 4.4 集成到 prompt 组装流程：发送前自动估算，超限拒绝并返回 TokenBudgetExceededError
-- [ ] 4.5 运行测试确认通过 → commit: `feat(token-budget): add token estimation with adaptive calibration`
+- [x] 4.1 TDD: 编写 `tests/test_token_budget.py` — 测试 token 计数、预算分配、缓存、自适应校准
+- [x] 4.2 实现 TokenBudgetManager：`backend/app/services/analytics/token_budget.py` — tiktoken 计数（cl100k_base）、预算分配（system/retrieval_context/generation）、LRU 缓存
+- [x] 4.3 安全裕度设为 25%，实现自适应校准：记录 actual vs estimated 比值，偏差 >15% 时自动调整校准系数
+- [x] 4.4 集成到 prompt 组装流程：发送前自动估算，超限拒绝并返回 TokenBudgetExceededError
+- [x] 4.5 运行测试确认通过 → commit: `feat(token-budget): add token estimation with adaptive calibration`
 
 ---
 

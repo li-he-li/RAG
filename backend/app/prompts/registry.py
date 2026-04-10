@@ -50,6 +50,7 @@ class RenderedPrompt:
     name: str
     version: str
     segments: tuple[PromptSegment, ...]
+    token_budget: dict[str, int] | None = None
 
     def as_messages(self) -> list[dict[str, str]]:
         return [{"role": segment.role, "content": segment.content} for segment in self.segments]
@@ -183,6 +184,30 @@ class PromptRegistry:
             name=template.name,
             version=template.version,
             segments=rendered_segments,
+        )
+
+    def render_with_budget(
+        self,
+        name: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        token_budget_manager: Any,
+        context_window: int,
+        generation_tokens: int,
+        model: str = "deepseek-chat",
+    ) -> RenderedPrompt:
+        rendered = self.render(name, variables)
+        token_budget = token_budget_manager.enforce_messages_budget(
+            rendered.as_messages(),
+            generation_tokens=generation_tokens,
+            context_window=context_window,
+            model=model,
+        )
+        return RenderedPrompt(
+            name=rendered.name,
+            version=rendered.version,
+            segments=rendered.segments,
+            token_budget=token_budget,
         )
 
     @contextmanager
