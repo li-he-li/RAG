@@ -91,10 +91,10 @@
 
 ## 10. Golden Snapshot Contract Test（Phase 3 前置守护）
 
-- [ ] 10.1 对现有 4 个核心端点录制 golden snapshot：`/api/v1/similar-cases/compare`、`/api/v1/contract-review/stream`、`/api/v1/chat/stream`、`/api/v1/prediction/*`
-- [ ] 10.2 为每个端点建立 legacy contract fixtures（JSON 结构 + streaming 事件序列 + HTTP status codes）
-- [ ] 10.3 编写 `tests/test_api_contract.py` — 验证端点响应结构与 golden snapshot 一致
-- [ ] 10.4 运行测试确认通过 → commit: `test(contract): add golden snapshot API contract tests`
+- [x] 10.1 对现有 4 个核心端点录制 golden snapshot：`/api/v1/similar-cases/compare`、`/api/v1/contract-review/stream`、`/api/v1/chat/stream`、`/api/v1/prediction/*`
+- [x] 10.2 为每个端点建立 legacy contract fixtures（JSON 结构 + streaming 事件序列 + HTTP status codes）
+- [x] 10.3 编写 `tests/test_api_contract.py` — 验证端点响应结构与 golden snapshot 一致
+- [x] 10.4 运行测试确认通过 → commit: `test(contract): add golden snapshot API contract tests`
 
 ---
 

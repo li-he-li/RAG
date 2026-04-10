@@ -1,0 +1,381 @@
+{
+  "metadata": {
+    "name": "legacy-api-v1-golden-contracts",
+    "recorded_at": "2026-04-10T00:00:00Z",
+    "purpose": "Golden snapshots guarding public API compatibility during agent pipeline migration.",
+    "forbidden_public_stream_event_types": [
+      "governance_blocked",
+      "governance_retracted",
+      "pipeline_completed",
+      "plan_created",
+      "step_completed",
+      "step_started",
+      "validation_passed",
+      "validation_rejected"
+    ]
+  },
+  "contracts": [
+    {
+      "name": "similar-case-compare",
+      "method": "POST",
+      "endpoint": "/api/v1/similar-cases/compare",
+      "kind": "json",
+      "status_code": 200,
+      "response_model": "SimilarCaseSearchResponse",
+      "response": {
+        "session_id": "session-contract-001",
+        "query": "Find cases with similar contract breach facts.",
+        "comparison_query": "construction delay liquidated damages owner notice",
+        "attachment_file_names": [
+          "claim-material.txt"
+        ],
+        "case_search_profile": {
+          "legal_relationship": "construction contract",
+          "dispute_focuses": [
+            "delay liability",
+            "liquidated damages"
+          ],
+          "claim_targets": [
+            "damages"
+          ],
+          "party_roles": [
+            "owner",
+            "contractor"
+          ],
+          "key_facts": [
+            "late completion",
+            "written notice was sent"
+          ],
+          "timeline": [
+            "2024-05-01 notice",
+            "2024-06-15 completion"
+          ],
+          "amount_terms": [
+            "500000"
+          ],
+          "retrieval_intent": "Find similar dispute handling."
+        },
+        "extracted_case_points": [
+          "late completion",
+          "written notice was sent"
+        ],
+        "exact_match": null,
+        "near_duplicate_matches": [
+          {
+            "doc_id": "case-001",
+            "file_name": "case-001.txt",
+            "version_id": "v1",
+            "final_score": 0.91,
+            "similarity_score": 0.89,
+            "match_type": "near_duplicate",
+            "match_reason": "Shared delay and notice dispute facts.",
+            "text_overlap_ratio": 0.67,
+            "file_name_aligned": false,
+            "citations": [
+              {
+                "doc_id": "case-001",
+                "file_name": "case-001.txt",
+                "line_start": 12,
+                "line_end": 18,
+                "version_id": "v1",
+                "snippet": "The owner issued written notice before claiming delay damages.",
+                "similarity_score": 0.88
+              }
+            ],
+            "matched_points": [
+              "written notice",
+              "delay damages"
+            ],
+            "matched_profile_fields": [
+              "dispute_focuses",
+              "key_facts"
+            ]
+          }
+        ],
+        "similar_case_matches": [
+          {
+            "doc_id": "case-002",
+            "file_name": "case-002.txt",
+            "version_id": "v3",
+            "final_score": 0.78,
+            "similarity_score": 0.76,
+            "match_type": "similar_case",
+            "match_reason": "Comparable delay allocation issue.",
+            "text_overlap_ratio": 0.41,
+            "file_name_aligned": false,
+            "citations": [
+              {
+                "doc_id": "case-002",
+                "file_name": "case-002.txt",
+                "line_start": 31,
+                "line_end": 36,
+                "version_id": "v3",
+                "snippet": "The court evaluated delay responsibility using progress records.",
+                "similarity_score": 0.74
+              }
+            ],
+            "matched_points": [
+              "delay responsibility"
+            ],
+            "matched_profile_fields": [
+              "legal_relationship"
+            ]
+          }
+        ],
+        "timestamp": "2026-04-10T00:00:00Z"
+      }
+    },
+    {
+      "name": "contract-review-stream",
+      "method": "POST",
+      "endpoint": "/api/v1/contract-review/stream",
+      "kind": "stream",
+      "status_code": 200,
+      "media_type": "application/x-ndjson",
+      "expected_event_types": [
+        "start",
+        "file_start",
+        "delta",
+        "file_done",
+        "done"
+      ],
+      "event_key_sequence": [
+        [
+          "type",
+          "query",
+          "review_mode",
+          "template_id",
+          "template_name",
+          "review_file_count"
+        ],
+        [
+          "type",
+          "file_index",
+          "file_id",
+          "file_name",
+          "template_id",
+          "template_name",
+          "finding_count"
+        ],
+        [
+          "type",
+          "delta",
+          "file_index",
+          "file_id",
+          "file_name"
+        ],
+        [
+          "type",
+          "file_index",
+          "file_id",
+          "file_name",
+          "template_id",
+          "template_name",
+          "finding_count"
+        ],
+        [
+          "type",
+          "query",
+          "answer",
+          "review_mode",
+          "template_id",
+          "template_name",
+          "review_file_count"
+        ]
+      ],
+      "stream_events": [
+        {
+          "type": "start",
+          "query": "Review liability deviations.",
+          "review_mode": "template_difference",
+          "template_id": "template-001",
+          "template_name": "Standard Construction Contract",
+          "review_file_count": 1
+        },
+        {
+          "type": "file_start",
+          "file_index": 0,
+          "file_id": "review-file-001",
+          "file_name": "draft-contract.txt",
+          "template_id": "template-001",
+          "template_name": "Standard Construction Contract",
+          "finding_count": 2
+        },
+        {
+          "type": "delta",
+          "delta": "Clause 7 shifts delay risk to the contractor without notice safeguards.",
+          "file_index": 0,
+          "file_id": "review-file-001",
+          "file_name": "draft-contract.txt"
+        },
+        {
+          "type": "file_done",
+          "file_index": 0,
+          "file_id": "review-file-001",
+          "file_name": "draft-contract.txt",
+          "template_id": "template-001",
+          "template_name": "Standard Construction Contract",
+          "finding_count": 2
+        },
+        {
+          "type": "done",
+          "query": "Review liability deviations.",
+          "answer": "Found two liability deviations requiring review.",
+          "review_mode": "template_difference",
+          "template_id": "template-001",
+          "template_name": "Standard Construction Contract",
+          "review_file_count": 1
+        }
+      ]
+    },
+    {
+      "name": "chat-stream",
+      "method": "POST",
+      "endpoint": "/api/v1/chat/stream",
+      "kind": "stream",
+      "status_code": 200,
+      "media_type": "application/x-ndjson",
+      "expected_event_types": [
+        "start",
+        "delta",
+        "done"
+      ],
+      "event_key_sequence": [
+        [
+          "type",
+          "query",
+          "grounded",
+          "used_documents",
+          "attachment_used",
+          "attachment_file_name"
+        ],
+        [
+          "type",
+          "delta"
+        ],
+        [
+          "type",
+          "query",
+          "answer",
+          "citations",
+          "grounded",
+          "used_documents",
+          "attachment_used",
+          "attachment_file_name"
+        ]
+      ],
+      "stream_events": [
+        {
+          "type": "start",
+          "query": "Can the owner claim delay damages?",
+          "grounded": true,
+          "used_documents": 1,
+          "attachment_used": false,
+          "attachment_file_name": null
+        },
+        {
+          "type": "delta",
+          "delta": "The owner may claim delay damages if notice and causation are supported."
+        },
+        {
+          "type": "done",
+          "query": "Can the owner claim delay damages?",
+          "answer": "The owner may claim delay damages if notice and causation are supported.",
+          "citations": [
+            {
+              "doc_id": "case-001",
+              "file_name": "case-001.txt",
+              "line_start": 12,
+              "line_end": 18,
+              "version_id": "v1",
+              "snippet": "The owner issued written notice before claiming delay damages.",
+              "similarity_score": 0.88
+            }
+          ],
+          "grounded": true,
+          "used_documents": 1,
+          "attachment_used": false,
+          "attachment_file_name": null
+        }
+      ]
+    },
+    {
+      "name": "opponent-prediction-start",
+      "method": "POST",
+      "endpoint": "/api/v1/opponent-prediction/start",
+      "legacy_domain_pattern": "/api/v1/prediction/*",
+      "kind": "json",
+      "status_code": 200,
+      "response_model": "OpponentPredictionReport",
+      "response": {
+        "report_id": "report-001",
+        "task_id": "task-001",
+        "session_id": "session-contract-001",
+        "template_id": "prediction-template-001",
+        "case_name": "Owner v Contractor",
+        "query": "Predict opponent arguments.",
+        "case_summary": "The dispute concerns construction delay damages.",
+        "predicted_arguments": [
+          {
+            "title": "Delay caused by owner-side design changes",
+            "basis": "The opponent may argue owner instructions extended the schedule.",
+            "counter": "Compare instruction dates against the approved progress baseline.",
+            "opponent_statement": "The delay resulted from repeated owner changes.",
+            "priority": "primary",
+            "citations": [
+              {
+                "doc_id": "opponent-001",
+                "file_name": "opponent-brief.txt",
+                "line_start": 5,
+                "line_end": 9,
+                "version_id": "v2",
+                "snippet": "The contractor attributed delay to late design confirmations.",
+                "similarity_score": 0.82
+              }
+            ],
+            "inference_only": false,
+            "label": "argument",
+            "category": "delay-defense",
+            "sort_reason": "Most directly targets causation."
+          }
+        ],
+        "counter_strategies": [
+          "Use progress records to separate owner-caused and contractor-caused delay."
+        ],
+        "citations": [
+          {
+            "doc_id": "opponent-001",
+            "file_name": "opponent-brief.txt",
+            "line_start": 5,
+            "line_end": 9,
+            "version_id": "v2",
+            "snippet": "The contractor attributed delay to late design confirmations.",
+            "similarity_score": 0.82
+          }
+        ],
+        "evidence_count": 1,
+        "inference_count": 0,
+        "uncertainties": [
+          "No signed change-order ledger was provided."
+        ],
+        "question_type": "opponent-argument",
+        "focus_dimension": "causation",
+        "answer_shape": "ranked-list",
+        "answer_title": "Likely opponent arguments",
+        "answer_summary": "The strongest predicted argument attacks delay causation.",
+        "retrieval_queries": [
+          "owner design change delay defense"
+        ],
+        "generated_at": "2026-04-10T00:00:00Z"
+      }
+    }
+  ],
+  "error_contract": {
+    "status_code": 500,
+    "payload": {
+      "error": "internal_error",
+      "detail": "Internal server error.",
+      "citation_missing": false
+    }
+  }
+}
