@@ -42,13 +42,13 @@
 
 ## 5. Agent 框架核心 (Effective)
 
-- [ ] 5.1 创建目录结构：`backend/app/agents/`、`backend/app/agents/__init__.py`
-- [ ] 5.2 TDD: 编写 `tests/test_agent_framework.py` — 测试 AgentBase、Pipeline 编排（含简化拓扑）、streaming
-- [ ] 5.3 实现 AgentBase 抽象类：`backend/app/agents/base.py` — run()、validate()、name 属性
-- [ ] 5.4 实现 PlannerAgent、ExecutorAgent、ValidatorAgent 抽象
-- [ ] 5.5 实现 AgentPipeline 编排器：支持三种拓扑 `[Executor]`、`[Executor→Validator]`、`[Planner→Executor→Validator]`，支持 streaming
-- [ ] 5.6 实现 SkillRegistry：`backend/app/agents/registry.py` — 按 name 注册和发现 agent
-- [ ] 5.7 运行测试确认通过 → commit: `feat(agents): add agent framework with flexible pipeline topologies`
+- [x] 5.1 创建目录结构：`backend/app/agents/`、`backend/app/agents/__init__.py`
+- [x] 5.2 TDD: 编写 `tests/test_agent_framework.py` — 测试 AgentBase、Pipeline 编排（含简化拓扑）、streaming
+- [x] 5.3 实现 AgentBase 抽象类：`backend/app/agents/base.py` — run()、validate()、name 属性
+- [x] 5.4 实现 PlannerAgent、ExecutorAgent、ValidatorAgent 抽象
+- [x] 5.5 实现 AgentPipeline 编排器：支持三种拓扑 `[Executor]`、`[Executor→Validator]`、`[Planner→Executor→Validator]`，支持 streaming
+- [x] 5.6 实现 SkillRegistry：`backend/app/agents/registry.py` — 按 name 注册和发现 agent
+- [x] 5.7 运行测试确认通过 → commit: `feat(agents): add agent framework with flexible pipeline topologies`
 
 ## 6. LLM 输出治理 (Safe — 输出端)
 
