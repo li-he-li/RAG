@@ -114,12 +114,12 @@
 
 ## 12. 类案搜索 Agent (Effective)
 
-- [ ] 12.1 TDD: 编写 `tests/test_agent_similar_case.py` — 测试执行、验证、API 契约兼容
-- [ ] 12.2 实现 SimilarCaseExecutor：调用现有 retrieval + similar_case_search 服务（策略选择内联为同步函数，不需要完整 PlannerAgent）
-- [ ] 12.3 实现 SimilarCaseValidator：调用 traceability 验证 + 溯源校验
-- [ ] 12.4 组装简化 pipeline：`[Executor → Validator]` 拓扑
-- [ ] 12.5 修改 search router：`/api/v1/similar-cases/compare` 路由改为通过 agent pipeline + CompatibilityAdapter 调度
-- [ ] 12.6 运行 golden snapshot contract test 确认 API 响应格式兼容 → commit: `feat(agents): similar-case search agent pipeline`
+- [x] 12.1 TDD: 编写 `tests/test_agent_similar_case.py` — 测试执行、验证、API 契约兼容
+- [x] 12.2 实现 SimilarCaseExecutor：调用现有 retrieval + similar_case_search 服务（策略选择内联为同步函数，不需要完整 PlannerAgent）
+- [x] 12.3 实现 SimilarCaseValidator：调用 traceability 验证 + 溯源校验
+- [x] 12.4 组装简化 pipeline：`[Executor → Validator]` 拓扑
+- [x] 12.5 修改 search router：`/api/v1/similar-cases/compare` 路由改为通过 agent pipeline + CompatibilityAdapter 调度
+- [x] 12.6 运行 golden snapshot contract test 确认 API 响应格式兼容 → commit: `feat(agents): similar-case search agent pipeline`
 
 ## 13. 合同审查 Agent (Effective)
 

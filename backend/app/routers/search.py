@@ -199,10 +199,24 @@ async def similar_case_compare(
     request: SimilarCaseSearchRequest,
     db: Session = Depends(get_session),
 ):
-    """Run dedicated similar-case comparison against session-scoped uploads."""
+    """Run dedicated similar-case comparison via agent pipeline."""
     _ensure_retrieval_ready()
     try:
-        return await execute_similar_case_search(request, db)
+        from app.agents.similar_case import create_similar_case_pipeline
+        from app.agents.compatibility import CompatibilityAdapter, EndpointContract
+
+        contract = EndpointContract(
+            name="similar_case_compare",
+            response_mapper=lambda output: output if isinstance(output, dict) else {},
+            public_stream_event_types=frozenset(),
+        )
+        adapter = CompatibilityAdapter(contract=contract)
+        pipeline = create_similar_case_pipeline()
+        result = await pipeline.run({
+            "request": request.model_dump(),
+            "db": db,
+        })
+        return adapter.adapt_response(result)
     except HTTPException:
         raise
     except Exception as e:
