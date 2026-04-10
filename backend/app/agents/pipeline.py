@@ -14,6 +14,11 @@ from app.agents.base import (
     ValidatedOutput,
     ValidatorAgent,
 )
+from app.agents.output_governance import (
+    GovernanceBlockError,
+    OutputGovernancePipeline,
+    SchemaValidationError,
+)
 
 
 class AgentPipeline:
@@ -23,10 +28,12 @@ class AgentPipeline:
         executor: ExecutorAgent[Any, Any],
         planner: PlannerAgent[Any, ExecutionPlan] | None = None,
         validator: ValidatorAgent[Any, ValidatedOutput | Rejection] | None = None,
+        governance_pipeline: OutputGovernancePipeline | None = None,
     ) -> None:
         self.planner = planner
         self.executor = executor
         self.validator = validator
+        self.governance_pipeline = governance_pipeline or OutputGovernancePipeline()
         self._ensure_unique_agent_names()
 
     async def run(self, request: Any) -> RawResult | ValidatedOutput | Rejection:
@@ -35,8 +42,12 @@ class AgentPipeline:
             current = await self.planner.execute(current)
         raw_result = await self.executor.execute(current)
         if self.validator is None:
+            await self.governance_pipeline.govern_raw_result(raw_result)
             return raw_result
-        return await self.validator.execute(raw_result)
+        validated = await self.validator.execute(raw_result)
+        if isinstance(validated, Rejection):
+            return validated
+        return await self.governance_pipeline.govern_output(validated)
 
     async def stream(self, request: Any) -> AsyncIterator[str]:
         current: Any = request
@@ -59,6 +70,14 @@ class AgentPipeline:
         )
 
         if self.validator is None:
+            try:
+                await self.governance_pipeline.govern_raw_result(raw_result, layer="post_stream")
+            except (GovernanceBlockError, SchemaValidationError) as exc:
+                yield self.governance_pipeline.retracted_event(
+                    violated_rule=exc.violated_rule,
+                    message="discard prior streamed content",
+                )
+                return
             yield self._event("pipeline_completed", self.executor)
             return
 
@@ -72,6 +91,18 @@ class AgentPipeline:
             )
             yield self._event("step_completed", self.validator)
             yield self._event("pipeline_completed", self.validator, {"status": "rejected"})
+            return
+
+        try:
+            validated = await self.governance_pipeline.govern_output(
+                validated,
+                layer="post_stream",
+            )
+        except (GovernanceBlockError, SchemaValidationError) as exc:
+            yield self.governance_pipeline.retracted_event(
+                violated_rule=exc.violated_rule,
+                message="discard prior streamed content",
+            )
             return
 
         yield self._event(

@@ -52,14 +52,14 @@
 
 ## 6. LLM 输出治理 (Safe — 输出端)
 
-- [ ] 6.1 TDD: 编写 `tests/test_output_governance.py` — 测试安全过滤、注入检测、schema 校验、流式两层策略
-- [ ] 6.2 实现 OutputGovernancePipeline：`backend/app/agents/output_governance.py`
+- [x] 6.1 TDD: 编写 `tests/test_output_governance.py` — 测试安全过滤、注入检测、schema 校验、流式两层策略
+- [x] 6.2 实现 OutputGovernancePipeline：`backend/app/agents/output_governance.py`
   - 非流式路径：Validator 之后、JSON 响应之前，做完整治理（PII + schema + 注入）
   - 流式层（per-chunk）：轻量 pattern scan（注入关键词黑名单），可疑时中断并发 `governance_blocked` 事件
   - 聚合层（post-stream）：流结束后对完整输出做全量治理，不通过则发 `governance_retracted` 事件
-- [ ] 6.3 集成到 AgentPipeline：确保所有输出路径（streaming / sync / error recovery）均经过治理
-- [ ] 6.4 实现审计日志：记录所有治理决策（pass/block/retract）
-- [ ] 6.5 运行测试确认通过 → commit: `feat(governance): add output governance with streaming two-layer strategy`
+- [x] 6.3 集成到 AgentPipeline：确保所有输出路径（streaming / sync / error recovery）均经过治理
+- [x] 6.4 实现审计日志：记录所有治理决策（pass/block/retract）
+- [x] 6.5 运行测试确认通过 → commit: `feat(governance): add output governance with streaming two-layer strategy`
 
 ## 7. 工具执行治理 (Safe — 工具端)
 

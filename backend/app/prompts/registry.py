@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -62,6 +63,7 @@ class PromptRegistry:
         self._templates: dict[str, PromptTemplate] = {}
         self._file_versions: dict[Path, dict[str, str]] = {}
         self._file_mtimes: dict[Path, int] = {}
+        self._file_signatures: dict[Path, str] = {}
         self._watch_stop = Event()
         self._watch_thread: Thread | None = None
         self.reload()
@@ -73,12 +75,14 @@ class PromptRegistry:
         templates: dict[str, PromptTemplate] = {}
         file_versions: dict[Path, dict[str, str]] = {}
         file_mtimes: dict[Path, int] = {}
+        file_signatures: dict[Path, str] = {}
 
         if not self.prompt_dir.exists():
             logger.info("Prompt directory does not exist: %s", self.prompt_dir)
             self._templates = {}
             self._file_versions = {}
             self._file_mtimes = {}
+            self._file_signatures = {}
             return
 
         for path in self._prompt_files():
@@ -111,6 +115,7 @@ class PromptRegistry:
 
             try:
                 file_mtimes[path] = path.stat().st_mtime_ns
+                file_signatures[path] = self._file_signature(path)
             except FileNotFoundError:
                 continue
 
@@ -120,6 +125,7 @@ class PromptRegistry:
         self._templates = templates
         self._file_versions = file_versions
         self._file_mtimes = file_mtimes
+        self._file_signatures = file_signatures
 
     def reload_changed_files(self) -> None:
         current_files = set(self._prompt_files()) if self.prompt_dir.exists() else set()
@@ -128,7 +134,10 @@ class PromptRegistry:
         if not changed:
             for path in current_files:
                 try:
-                    if path.stat().st_mtime_ns != self._file_mtimes.get(path):
+                    if (
+                        path.stat().st_mtime_ns != self._file_mtimes.get(path)
+                        or self._file_signature(path) != self._file_signatures.get(path)
+                    ):
                         changed = True
                         break
                 except FileNotFoundError:
@@ -254,6 +263,9 @@ class PromptRegistry:
         if not isinstance(entries, list):
             raise ValueError("templates must be a list")
         return [self._parse_template(entry, path) for entry in entries]
+
+    def _file_signature(self, path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _parse_template(self, data: Any, path: Path) -> PromptTemplate:
         if not isinstance(data, dict):
