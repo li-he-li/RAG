@@ -20,6 +20,17 @@ from app.agents.output_governance import (
     SchemaValidationError,
 )
 from app.agents.registry import SkillNotFoundError, SkillRegistry, SkillRegistryEntry
+from app.agents.robustness import (
+    BackgroundTaskTracker,
+    DirtyStateCleaner,
+    IdempotentRequestCache,
+    RequestCancellationManager,
+    RequestCancelled,
+    RobustnessManager,
+    TrackedTaskWarning,
+    background_task_tracker,
+    idempotent_request_cache,
+)
 from app.agents.tool_governance import (
     GovernedTool,
     ToolApprovalRequired,
@@ -35,7 +46,9 @@ from app.agents.tool_governance import (
 __all__ = [
     "AgentBase",
     "AgentPipeline",
+    "BackgroundTaskTracker",
     "CompatibilityAdapter",
+    "DirtyStateCleaner",
     "EndpointContract",
     "ErrorEnvelope",
     "ExecutionPlan",
@@ -44,11 +57,15 @@ __all__ = [
     "GovernanceBlockError",
     "GovernanceDecision",
     "GovernedTool",
+    "IdempotentRequestCache",
     "OutputGovernancePipeline",
     "PlannerAgent",
     "PlanStep",
     "RawResult",
     "Rejection",
+    "RequestCancellationManager",
+    "RequestCancelled",
+    "RobustnessManager",
     "SchemaValidationError",
     "SkillNotFoundError",
     "SkillRegistry",
@@ -61,7 +78,10 @@ __all__ = [
     "ToolInvocationBlocked",
     "ToolRegistry",
     "ToolSideEffectLevel",
+    "TrackedTaskWarning",
     "ValidatedOutput",
     "ValidationError",
     "ValidatorAgent",
+    "background_task_tracker",
+    "idempotent_request_cache",
 ]

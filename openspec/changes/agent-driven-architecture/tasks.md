@@ -82,12 +82,12 @@
 
 ## 9. 健壮性保障 (Robust)
 
-- [ ] 9.1 TDD: 编写 `tests/test_robustness.py` — 测试幂等重试、优雅取消、async task 泄漏管理
-- [ ] 9.2 实现幂等重试：基于 session_id + request_hash 去重，重复请求返回缓存结果或忽略
-- [ ] 9.3 实现优雅取消：前端 AbortSignal / 断开连接时传播到后端 async LLM 调用，及时释放资源
-- [ ] 9.4 实现 async task 泄漏管理：追踪所有 background task，shutdown 时取消孤儿任务
-- [ ] 9.5 实现脏状态清理：启动时清理超过 TTL 的孤立临时数据
-- [ ] 9.6 运行测试确认通过 → commit: `feat(robust): add idempotent retry and graceful cancellation`
+- [x] 9.1 TDD: 编写 `tests/test_robustness.py` — 测试幂等重试、优雅取消、async task 泄漏管理
+- [x] 9.2 实现幂等重试：基于 session_id + request_hash 去重，重复请求返回缓存结果或忽略
+- [x] 9.3 实现优雅取消：前端 AbortSignal / 断开连接时传播到后端 async LLM 调用，及时释放资源
+- [x] 9.4 实现 async task 泄漏管理：追踪所有 background task，shutdown 时取消孤儿任务
+- [x] 9.5 实现脏状态清理：启动时清理超过 TTL 的孤立临时数据
+- [x] 9.6 运行测试确认通过 → commit: `feat(robust): add idempotent retry and graceful cancellation`
 
 ## 10. Golden Snapshot Contract Test（Phase 3 前置守护）
 

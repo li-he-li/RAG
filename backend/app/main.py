@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +31,12 @@ from app.services.analytics.middleware import CorrelationIdMiddleware
 from app.core.database import init_db
 from app.routers.prediction import router as prediction_router
 from app.routers.search import router as search_router
+from app.agents.robustness import (
+    DirtyStateCleaner,
+    RobustnessManager,
+    background_task_tracker,
+    idempotent_request_cache,
+)
 from app.services.session_files import session_temp_file_store
 
 logging.basicConfig(
@@ -37,6 +44,11 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+robustness_manager = RobustnessManager(
+    idempotent_cache=idempotent_request_cache,
+    task_tracker=background_task_tracker,
+    dirty_state_cleaner=DirtyStateCleaner(temp_roots=(Path(".tmp"),), ttl_seconds=4 * 60 * 60),
+)
 
 
 @asynccontextmanager
@@ -67,8 +79,10 @@ async def lifespan(app: FastAPI):
 
         logger.info("System fully initialized and ready.")
 
+    robustness_manager.schedule_startup_cleanup(active_session_ids=set())
     yield
 
+    await background_task_tracker.shutdown()
     session_temp_file_store.clear_all()
     logger.info("Shutting down...")
 
