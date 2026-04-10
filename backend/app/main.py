@@ -26,6 +26,7 @@ from app.middleware.api_key import APIKeyMiddleware
 from app.middleware.max_json_body import MaxJsonBodyMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.services.analytics.middleware import CorrelationIdMiddleware
 from app.core.database import init_db
 from app.routers.prediction import router as prediction_router
 from app.routers.search import router as search_router
@@ -83,6 +84,7 @@ app = FastAPI(
 app.add_middleware(CORSMiddleware, **get_cors_middleware_kwargs())
 # Optional shared secret for /api/* when API_KEY is set (OPTIONS exempt; see SECURITY.md)
 app.add_middleware(APIKeyMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimitMiddleware, per_minute=RATE_LIMIT_PER_MINUTE)
 app.add_middleware(MaxJsonBodyMiddleware, max_bytes=MAX_JSON_BODY_BYTES)
