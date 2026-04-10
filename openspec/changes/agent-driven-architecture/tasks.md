@@ -63,15 +63,15 @@
 
 ## 7. 工具执行治理 (Safe — 工具端)
 
-- [ ] 7.1 TDD: 编写 `tests/test_tool_governance.py` — 测试 allowlist、参数 schema、side-effect 审批策略、审计日志
-- [ ] 7.2 实现 ToolGovernancePolicy：`backend/app/agents/tool_governance.py`
+- [x] 7.1 TDD: 编写 `tests/test_tool_governance.py` — 测试 allowlist、参数 schema、side-effect 审批策略、审计日志
+- [x] 7.2 实现 ToolGovernancePolicy：`backend/app/agents/tool_governance.py`
   - ToolRegistry allowlist：只有注册工具可被调用
   - 参数 schema 校验：无效参数拒绝且无副作用
   - side-effect 分级：read-only 自动放行，stateful tool 需外部审批规则
   - Pre-execution injection defense：检查 tool-bound 输入中的注入尝试
-- [ ] 7.3 集成到 Planner / Executor 的工具调用入口：任何 tool invocation 都先经过治理层
-- [ ] 7.4 实现审计日志：每次治理决策（allow/block/approval-required）持久化
-- [ ] 7.5 运行测试确认通过 → commit: `feat(governance): add non-bypassable tool governance`
+- [x] 7.3 集成到 Planner / Executor 的工具调用入口：任何 tool invocation 都先经过治理层
+- [x] 7.4 实现审计日志：每次治理决策（allow/block/approval-required）持久化
+- [x] 7.5 运行测试确认通过 → commit: `feat(governance): add non-bypassable tool governance`
 
 ## 8. API 兼容适配层 (Compatibility)
 

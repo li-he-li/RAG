@@ -19,6 +19,17 @@ from app.agents.output_governance import (
     SchemaValidationError,
 )
 from app.agents.registry import SkillNotFoundError, SkillRegistry, SkillRegistryEntry
+from app.agents.tool_governance import (
+    GovernedTool,
+    ToolApprovalRequired,
+    ToolAuditLog,
+    ToolDecision,
+    ToolGovernancePolicy,
+    ToolInvocation,
+    ToolInvocationBlocked,
+    ToolRegistry,
+    ToolSideEffectLevel,
+)
 
 __all__ = [
     "AgentBase",
@@ -28,6 +39,7 @@ __all__ = [
     "GovernanceAuditLog",
     "GovernanceBlockError",
     "GovernanceDecision",
+    "GovernedTool",
     "OutputGovernancePipeline",
     "PlannerAgent",
     "PlanStep",
@@ -37,6 +49,14 @@ __all__ = [
     "SkillNotFoundError",
     "SkillRegistry",
     "SkillRegistryEntry",
+    "ToolApprovalRequired",
+    "ToolAuditLog",
+    "ToolDecision",
+    "ToolGovernancePolicy",
+    "ToolInvocation",
+    "ToolInvocationBlocked",
+    "ToolRegistry",
+    "ToolSideEffectLevel",
     "ValidatedOutput",
     "ValidationError",
     "ValidatorAgent",

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from app.agents.tool_governance import ToolGovernancePolicy
 
 InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
@@ -47,6 +50,9 @@ class Rejection:
 
 
 class AgentBase(Generic[InputT, OutputT]):
+    def __init__(self, *, tool_governance_policy: "ToolGovernancePolicy | None" = None) -> None:
+        self.tool_governance_policy = tool_governance_policy
+
     @property
     def name(self) -> str:
         raise NotImplementedError
@@ -60,6 +66,19 @@ class AgentBase(Generic[InputT, OutputT]):
     async def execute(self, input_data: InputT) -> OutputT:
         await self.validate(input_data)
         return await self.run(input_data)
+
+    async def invoke_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        tool_governance_policy = getattr(self, "tool_governance_policy", None)
+        if tool_governance_policy is None:
+            from app.agents.tool_governance import ToolGovernancePolicy
+
+            tool_governance_policy = ToolGovernancePolicy()
+            self.tool_governance_policy = tool_governance_policy
+        return await tool_governance_policy.invoke(
+            agent_name=self.name,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
 
 
 class PlannerAgent(AgentBase[InputT, OutputT]):
