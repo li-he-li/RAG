@@ -341,3 +341,190 @@ class TestPipelineReplay:
         replay = TrajectoryReplayService.replay(logger.records)
         # planner output should feed into executor input
         assert replay.get("validation_warnings") is not None
+
+
+# ---------------------------------------------------------------------------
+# Pipeline integration — trajectory auto-recording
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineTrajectoryIntegration:
+    """Test that AgentPipeline automatically records trajectory for each step."""
+
+    @pytest.mark.anyio
+    async def test_executor_only_pipeline_records_one_step(self) -> None:
+        from app.agents.pipeline import AgentPipeline
+        from app.agents.base import ExecutorAgent, RawResult
+
+        class SimpleExecutor(ExecutorAgent):
+            @property
+            def name(self) -> str:
+                return "simple_executor"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return RawResult(status="success", output={"result": "done"})
+
+        traj_logger = TrajectoryLogger(session_id="sess-pipe-1")
+        pipeline = AgentPipeline(
+            executor=SimpleExecutor(),
+            trajectory_logger=traj_logger,
+        )
+        result = await pipeline.run({"query": "test"})
+
+        records = traj_logger.records
+        assert len(records) == 1
+        assert records[0]["agent_name"] == "simple_executor"
+        assert records[0]["step_type"] == "execute"
+        assert records[0]["duration_ms"] >= 0
+
+    @pytest.mark.anyio
+    async def test_executor_validator_pipeline_records_two_steps(self) -> None:
+        from app.agents.pipeline import AgentPipeline
+        from app.agents.base import ExecutorAgent, ValidatorAgent, RawResult, ValidatedOutput
+
+        class Exe(ExecutorAgent):
+            @property
+            def name(self) -> str:
+                return "exe"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return RawResult(status="success", output={"val": 1})
+
+        class Val(ValidatorAgent):
+            @property
+            def name(self) -> str:
+                return "val"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return ValidatedOutput(output={"val": 1}, schema_name="test")
+
+        traj_logger = TrajectoryLogger(session_id="sess-pipe-2")
+        pipeline = AgentPipeline(
+            executor=Exe(),
+            validator=Val(),
+            trajectory_logger=traj_logger,
+        )
+        await pipeline.run({"query": "test"})
+
+        records = traj_logger.records
+        assert len(records) == 2
+        assert records[0]["agent_name"] == "exe"
+        assert records[0]["step_type"] == "execute"
+        assert records[1]["agent_name"] == "val"
+        assert records[1]["step_type"] == "validate"
+
+    @pytest.mark.anyio
+    async def test_full_pipeline_records_three_steps(self) -> None:
+        from app.agents.pipeline import AgentPipeline
+        from app.agents.base import (
+            ExecutorAgent, PlannerAgent, ValidatorAgent,
+            ExecutionPlan, PlanStep, RawResult, ValidatedOutput,
+        )
+
+        class Plan(PlannerAgent):
+            @property
+            def name(self) -> str:
+                return "plan"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return ExecutionPlan(
+                    steps=(PlanStep(name="step1", target_agent="exe"),)
+                )
+
+        class Exe(ExecutorAgent):
+            @property
+            def name(self) -> str:
+                return "exe"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return RawResult(status="success", output={"x": 1})
+
+        class Val(ValidatorAgent):
+            @property
+            def name(self) -> str:
+                return "val"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return ValidatedOutput(output={"x": 1}, schema_name="test")
+
+        traj_logger = TrajectoryLogger(session_id="sess-pipe-3")
+        pipeline = AgentPipeline(
+            executor=Exe(),
+            planner=Plan(),
+            validator=Val(),
+            trajectory_logger=traj_logger,
+        )
+        await pipeline.run({"query": "full pipeline"})
+
+        records = traj_logger.records
+        assert len(records) == 3
+        names = [r["agent_name"] for r in records]
+        assert names == ["plan", "exe", "val"]
+        types = [r["step_type"] for r in records]
+        assert types == ["plan", "execute", "validate"]
+
+    @pytest.mark.anyio
+    async def test_pipeline_without_trajectory_logger_works(self) -> None:
+        """Pipeline without trajectory_logger should work as before (backward compat)."""
+        from app.agents.pipeline import AgentPipeline
+        from app.agents.base import ExecutorAgent, RawResult
+
+        class Exe(ExecutorAgent):
+            @property
+            def name(self) -> str:
+                return "exe"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return RawResult(status="success", output={"ok": True})
+
+        pipeline = AgentPipeline(executor=Exe())
+        result = await pipeline.run({"query": "test"})
+        assert result.status == "success"
+
+    @pytest.mark.anyio
+    async def test_pipeline_records_prompt_versions(self) -> None:
+        from app.agents.pipeline import AgentPipeline
+        from app.agents.base import ExecutorAgent, RawResult
+
+        class Exe(ExecutorAgent):
+            @property
+            def name(self) -> str:
+                return "exe"
+
+            async def validate(self, input_data):
+                pass
+
+            async def run(self, input_data):
+                return RawResult(status="success", output={"ok": True})
+
+        traj_logger = TrajectoryLogger(session_id="sess-prompt-ver")
+        pipeline = AgentPipeline(
+            executor=Exe(),
+            trajectory_logger=traj_logger,
+            prompt_versions={"chat": "1.2.0", "retrieval": "2.0.0"},
+        )
+        await pipeline.run({"query": "test"})
+
+        records = traj_logger.records
+        assert records[0]["prompt_versions"] == {"chat": "1.2.0", "retrieval": "2.0.0"}
