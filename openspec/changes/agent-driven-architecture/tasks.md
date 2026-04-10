@@ -75,10 +75,10 @@
 
 ## 8. API 兼容适配层 (Compatibility)
 
-- [ ] 8.1 TDD: 编写 `tests/test_compatibility_adapter.py` — 覆盖非流式 JSON 响应和流式事件序列的 golden contract
-- [ ] 8.2 实现 CompatibilityAdapter：`backend/app/agents/compatibility.py` — 将 agent 内部 typed result / 内部事件映射回现有外部 API 契约
-- [ ] 8.3 确认内部新增事件（plan_created、step_started 等）不会直接泄露给旧前端
-- [ ] 8.4 运行测试确认通过 → commit: `feat(compat): add API compatibility adapter layer`
+- [x] 8.1 TDD: 编写 `tests/test_compatibility_adapter.py` — 覆盖非流式 JSON 响应和流式事件序列的 golden contract
+- [x] 8.2 实现 CompatibilityAdapter：`backend/app/agents/compatibility.py` — 将 agent 内部 typed result / 内部事件映射回现有外部 API 契约
+- [x] 8.3 确认内部新增事件（plan_created、step_started 等）不会直接泄露给旧前端
+- [x] 8.4 运行测试确认通过 → commit: `feat(compat): add API compatibility adapter layer`
 
 ## 9. 健壮性保障 (Robust)
 

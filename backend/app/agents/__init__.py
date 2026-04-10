@@ -10,6 +10,7 @@ from app.agents.base import (
     ValidationError,
     ValidatorAgent,
 )
+from app.agents.compatibility import CompatibilityAdapter, EndpointContract, ErrorEnvelope
 from app.agents.pipeline import AgentPipeline
 from app.agents.output_governance import (
     GovernanceAuditLog,
@@ -34,6 +35,9 @@ from app.agents.tool_governance import (
 __all__ = [
     "AgentBase",
     "AgentPipeline",
+    "CompatibilityAdapter",
+    "EndpointContract",
+    "ErrorEnvelope",
     "ExecutionPlan",
     "ExecutorAgent",
     "GovernanceAuditLog",
