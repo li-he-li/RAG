@@ -152,11 +152,11 @@
 
 ## 16. Phase 3 集成验证
 
-- [ ] 16.1 编写端到端集成测试：完整 agent pipeline 从 HTTP 请求到响应，覆盖全部 4 个业务域
-- [ ] 16.2 验证 7 项企业要求达标状态（Effective/Efficient/Safe/Robust/Monitorable/Updatable/Compounding）
-- [ ] 16.3 更新审计报告 `docs/代码质量审计报告.md`
-- [ ] 16.4 更新 `docs/` 下的架构文档
-- [ ] 16.5 全量测试通过 → commit: `feat(agents): phase 3 complete — all domains migrated`
+- [x] 16.1 编写端到端集成测试：完整 agent pipeline 从 HTTP 请求到响应，覆盖全部 4 个业务域
+- [x] 16.2 验证 7 项企业要求达标状态（Effective/Efficient/Safe/Robust/Monitorable/Updatable/Compounding）
+- [x] 16.3 更新审计报告 `docs/代码质量审计报告.md`
+- [x] 16.4 更新 `docs/` 下的架构文档
+- [x] 16.5 全量测试通过 → commit: `feat(agents): phase 3 complete — all domains migrated`
 
 ---
 

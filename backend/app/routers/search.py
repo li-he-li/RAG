@@ -510,16 +510,27 @@ async def contract_review_stream(
         raise HTTPException(status_code=400, detail="query is required")
 
     # Use agent pipeline for streaming
-    from app.agents.contract_review import create_contract_review_pipeline
-    pipeline = create_contract_review_pipeline()
+    from app.agents.compatibility import CompatibilityAdapter, EndpointContract
+    from app.agents.contract_review import stream_contract_review_pipeline
+
+    contract = EndpointContract(
+        name="contract_review_stream",
+        response_mapper=lambda output: output if isinstance(output, dict) else {},
+        public_stream_event_types=frozenset({"start", "file_start", "delta", "file_done", "done", "error"}),
+    )
+    adapter = CompatibilityAdapter(contract=contract)
 
     return StreamingResponse(
-        pipeline.stream({
-            "session_id": session_id,
-            "template_id": template_id,
-            "query": query,
-            "db": db,
-        }),
+        adapter.adapt_stream(
+            stream_contract_review_pipeline(
+                {
+                    "session_id": session_id,
+                    "template_id": template_id,
+                    "query": query,
+                    "db": db,
+                }
+            )
+        ),
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache",
