@@ -7,9 +7,10 @@ target pipeline through SkillRegistry, and executes it.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
-from app.agents.base import RawResult
+from app.agents.base import RawResult, Rejection, ValidatedOutput
 from app.agents.pipeline import AgentPipeline
 from app.agents.registry import SkillRegistry
 
@@ -47,7 +48,7 @@ class IntentRouter:
 
 
 class OrchestratorAgent:
-    """Central dispatcher: classify intent → resolve pipeline → execute.
+    """Central dispatcher: classify intent -> resolve pipeline -> execute.
 
     This agent does NOT contain business logic. It only:
     1. Classifies intent via IntentRouter
@@ -65,23 +66,8 @@ class OrchestratorAgent:
         self._registry = registry
         self._router = intent_router or IntentRouter()
 
-    async def dispatch(
-        self,
-        *,
-        endpoint: str,
-        payload: dict[str, Any],
-    ) -> RawResult:
-        """Dispatch a request to the appropriate agent pipeline.
-
-        Args:
-            endpoint: API endpoint path (e.g., "/api/chat/stream")
-            payload: Request payload
-
-        Returns:
-            RawResult from the executed pipeline
-        """
-        intent = self._router.classify(endpoint, payload)
-
+    def _resolve_pipeline(self, intent: str) -> AgentPipeline:
+        """Resolve intent to a pipeline instance."""
         try:
             entry = self._registry.discover(intent)
         except KeyError:
@@ -89,18 +75,73 @@ class OrchestratorAgent:
             try:
                 entry = self._registry.discover("chat")
             except KeyError:
-                return RawResult(
-                    status="error",
-                    output=None,
-                    error=f"intent '{intent}' not found and no chat fallback",
-                )
+                raise KeyError(f"intent '{intent}' not found and no chat fallback") from None
 
-        # The registry stores the pipeline factory class
         factory = entry.agent_class
         if hasattr(factory, "create"):
-            pipeline: AgentPipeline = factory.create()
-        else:
-            # If it's already an AgentPipeline class, instantiate it
-            pipeline = factory()  # type: ignore[operator]
+            return factory.create()
+        return factory()  # type: ignore[operator]
+
+    async def dispatch(
+        self,
+        *,
+        endpoint: str,
+        payload: dict[str, Any],
+    ) -> RawResult | ValidatedOutput | Rejection:
+        """Dispatch a request to the appropriate agent pipeline.
+
+        Args:
+            endpoint: API endpoint path (e.g., "/api/chat/stream")
+            payload: Request payload
+
+        Returns:
+            Result from the executed pipeline
+        """
+        intent = self._router.classify(endpoint, payload)
+
+        try:
+            pipeline = self._resolve_pipeline(intent)
+        except KeyError as exc:
+            return RawResult(status="error", output=None, error=str(exc))
 
         return await pipeline.run(payload)
+
+    async def dispatch_stream(
+        self,
+        *,
+        endpoint: str,
+        payload: dict[str, Any],
+        stream_fn_name: str = "stream",
+    ) -> AsyncIterator[str]:
+        """Dispatch a streaming request to the appropriate agent pipeline.
+
+        Looks up the streaming function (e.g., stream_chat_pipeline,
+        stream_contract_review_pipeline) based on intent and yields events.
+        """
+        intent = self._router.classify(endpoint, payload)
+
+        # Map intent to its streaming function
+        _STREAM_FN_MAP: dict[str, tuple[str, str]] = {
+            "chat": ("app.agents.chat", "stream_chat_pipeline"),
+            "contract_review": ("app.agents.contract_review", "stream_contract_review_pipeline"),
+        }
+
+        if intent in _STREAM_FN_MAP:
+            module_path, fn_name = _STREAM_FN_MAP[intent]
+            import importlib
+            module = importlib.import_module(module_path)
+            stream_fn = getattr(module, fn_name)
+            async for event in stream_fn(payload):
+                yield event
+            return
+
+        # Fallback: non-streaming intent, wrap as single event
+        result = await self.dispatch(endpoint=endpoint, payload=payload)
+        import json
+        if isinstance(result, RawResult):
+            yield json.dumps({"type": "done", "output": result.output}) + "\n"
+        elif isinstance(result, ValidatedOutput):
+            yield json.dumps({"type": "done", "output": result.output}) + "\n"
+        else:
+            yield json.dumps({"type": "error", "detail": str(result)}) + "\n"
+

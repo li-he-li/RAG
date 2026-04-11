@@ -183,7 +183,7 @@ async def start_opponent_prediction(
 
     try:
         from app.agents.compatibility import CompatibilityAdapter, EndpointContract
-        from app.agents.opponent_prediction import create_opponent_prediction_pipeline
+        from app.agents.orchestrator_integration import get_orchestrator
 
         contract = EndpointContract(
             name="opponent_prediction_start",
@@ -191,14 +191,14 @@ async def start_opponent_prediction(
             public_stream_event_types=frozenset(),
         )
         adapter = CompatibilityAdapter(contract=contract)
-        pipeline = create_opponent_prediction_pipeline()
-        result = await pipeline.run(
-            {
+        result = await get_orchestrator().dispatch(
+            endpoint="/api/opponent-prediction/start",
+            payload={
                 "session_id": session_id,
                 "template_id": template_id,
                 "query": query,
                 "db": db,
-            }
+            },
         )
         if isinstance(result, ValidatedOutput) and result.metadata.get("error"):
             status_code = int(result.metadata.get("status_code") or 500)

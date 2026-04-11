@@ -202,8 +202,8 @@ async def similar_case_compare(
     """Run dedicated similar-case comparison via agent pipeline."""
     _ensure_retrieval_ready()
     try:
-        from app.agents.similar_case import create_similar_case_pipeline
         from app.agents.compatibility import CompatibilityAdapter, EndpointContract
+        from app.agents.orchestrator_integration import get_orchestrator
 
         contract = EndpointContract(
             name="similar_case_compare",
@@ -211,11 +211,10 @@ async def similar_case_compare(
             public_stream_event_types=frozenset(),
         )
         adapter = CompatibilityAdapter(contract=contract)
-        pipeline = create_similar_case_pipeline()
-        result = await pipeline.run({
-            "request": request.model_dump(),
-            "db": db,
-        })
+        result = await get_orchestrator().dispatch(
+            endpoint="/api/similar-cases/compare",
+            payload={"request": request.model_dump(), "db": db},
+        )
         return adapter.adapt_response(result)
     except HTTPException:
         raise
@@ -265,8 +264,8 @@ async def grounded_chat_stream(
     """Stream chat output with the same grounding pipeline used by /chat."""
     _ensure_retrieval_ready()
     try:
-        from app.agents.chat import stream_chat_pipeline
         from app.agents.compatibility import CompatibilityAdapter, EndpointContract
+        from app.agents.orchestrator_integration import get_orchestrator
 
         contract = EndpointContract(
             name="chat_stream",
@@ -276,11 +275,9 @@ async def grounded_chat_stream(
         adapter = CompatibilityAdapter(contract=contract)
         return StreamingResponse(
             adapter.adapt_stream(
-                stream_chat_pipeline(
-                    {
-                        "request": request.model_dump(),
-                        "db": db,
-                    }
+                get_orchestrator().dispatch_stream(
+                    endpoint="/api/chat/stream",
+                    payload={"request": request.model_dump(), "db": db},
                 )
             ),
             media_type="application/x-ndjson",
@@ -509,9 +506,9 @@ async def contract_review_stream(
     if not query:
         raise HTTPException(status_code=400, detail="query is required")
 
-    # Use agent pipeline for streaming
+    # Use orchestrator for streaming
     from app.agents.compatibility import CompatibilityAdapter, EndpointContract
-    from app.agents.contract_review import stream_contract_review_pipeline
+    from app.agents.orchestrator_integration import get_orchestrator
 
     contract = EndpointContract(
         name="contract_review_stream",
@@ -522,13 +519,14 @@ async def contract_review_stream(
 
     return StreamingResponse(
         adapter.adapt_stream(
-            stream_contract_review_pipeline(
-                {
+            get_orchestrator().dispatch_stream(
+                endpoint="/api/contract-review/stream",
+                payload={
                     "session_id": session_id,
                     "template_id": template_id,
                     "query": query,
                     "db": db,
-                }
+                },
             )
         ),
         media_type="application/x-ndjson",
