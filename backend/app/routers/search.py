@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.config import get_bootstrap_status, get_bootstrap_missing_components, API_KEY
+from app.core.config import get_bootstrap_missing_components, probe_bootstrap_status, API_KEY
 from app.core.http_errors import internal_error_detail
 from app.core.uploads import read_upload_bytes
 from app.core.database import get_session
@@ -51,10 +51,10 @@ router = APIRouter(tags=["legal-search"])
 
 def _ensure_retrieval_ready() -> None:
     """Preflight gate: block retrieval endpoints until bootstrap completes."""
-    status = get_bootstrap_status()
+    status = probe_bootstrap_status(refresh_snapshot=True)
     if status.get("all_ready", False):
         return
-    missing = get_bootstrap_missing_components()
+    missing = get_bootstrap_missing_components(status)
     detail = "Retrieval service is unavailable until bootstrap completes."
     if missing:
         detail = f"{detail} Missing: {', '.join(missing)}"
@@ -597,74 +597,13 @@ async def delete_document_endpoint(
 @router.get("/health", response_model=BootstrapStatus)
 async def health_check():
     """Check the readiness of all system components."""
-    from app.core.config import (
-        PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE,
-        QDRANT_HOST, QDRANT_PORT,
-    )
-
-    status = BootstrapStatus()
-
-    # Check PostgreSQL
-    try:
-        import psycopg2
-        conn = psycopg2.connect(
-            host=PG_HOST, port=PG_PORT,
-            user=PG_USER, password=PG_PASSWORD,
-            dbname=PG_DATABASE,
-        )
-        conn.close()
-        status.postgresql_ready = True
-    except Exception:
-        status.postgresql_ready = False
-
-    # Check Qdrant
-    try:
-        import httpx
-        resp = httpx.get(f"http://{QDRANT_HOST}:{QDRANT_PORT}/healthz", timeout=3)
-        status.qdrant_ready = resp.status_code == 200
-    except Exception:
-        status.qdrant_ready = False
-
-    # Check embedding model (lightweight check - just try to get the model)
-    try:
-        from app.core.config import EMBEDDING_PROVIDER
-        if EMBEDDING_PROVIDER == "google":
-            from app.services.embedding import _get_google_client
-            _get_google_client()
-        else:
-            from app.services.embedding import _get_local_model
-            _get_local_model()
-        status.embedding_model_ready = True
-    except Exception:
-        status.embedding_model_ready = False
-
-    # Check reranker model
-    try:
-        from app.services.reranker import _get_reranker
-        _get_reranker()
-        status.reranker_model_ready = True
-    except Exception:
-        status.reranker_model_ready = False
-
-    status.all_ready = all([
-        status.postgresql_ready,
-        status.qdrant_ready,
-        status.embedding_model_ready,
-        status.reranker_model_ready,
-    ])
+    readiness = probe_bootstrap_status(refresh_snapshot=True)
+    status = BootstrapStatus(**readiness)
 
     if status.all_ready:
         status.message = "All components are ready."
     else:
-        missing = []
-        if not status.postgresql_ready:
-            missing.append("PostgreSQL")
-        if not status.qdrant_ready:
-            missing.append("Qdrant")
-        if not status.embedding_model_ready:
-            missing.append("Embedding Model")
-        if not status.reranker_model_ready:
-            missing.append("Reranker Model")
+        missing = get_bootstrap_missing_components(readiness)
         status.message = f"Not ready: {', '.join(missing)}"
 
     return status

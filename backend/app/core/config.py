@@ -245,21 +245,96 @@ _BOOTSTRAP_STATUS: dict[str, bool] = {
     "all_ready": False,
 }
 
+_BOOTSTRAP_COMPONENT_LABELS: tuple[tuple[str, str], ...] = (
+    ("postgresql_ready", "PostgreSQL"),
+    ("qdrant_ready", "Qdrant"),
+    ("embedding_model_ready", "Embedding Model"),
+    ("reranker_model_ready", "Reranker Model"),
+)
+
 
 def get_bootstrap_status() -> dict[str, bool]:
     """Return a snapshot of the latest bootstrap status."""
     return dict(_BOOTSTRAP_STATUS)
 
 
-def get_bootstrap_missing_components() -> list[str]:
+def get_bootstrap_missing_components(status: dict[str, bool] | None = None) -> list[str]:
     """Return a list of dependency names that are not ready."""
-    mapping = [
-        ("postgresql_ready", "PostgreSQL"),
-        ("qdrant_ready", "Qdrant"),
-        ("embedding_model_ready", "Embedding Model"),
-        ("reranker_model_ready", "Reranker Model"),
-    ]
-    return [name for key, name in mapping if not _BOOTSTRAP_STATUS.get(key, False)]
+    source = _BOOTSTRAP_STATUS if status is None else status
+    return [name for key, name in _BOOTSTRAP_COMPONENT_LABELS if not source.get(key, False)]
+
+
+def _probe_postgresql_readiness() -> bool:
+    """Perform a live PostgreSQL readiness probe."""
+    try:
+        import psycopg2
+
+        conn = psycopg2.connect(
+            host=PG_HOST,
+            port=PG_PORT,
+            user=PG_USER,
+            password=PG_PASSWORD,
+            dbname=PG_DATABASE,
+        )
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def _probe_qdrant_readiness() -> bool:
+    """Perform a live Qdrant readiness probe."""
+    try:
+        import httpx
+
+        resp = httpx.get(f"http://{QDRANT_HOST}:{QDRANT_PORT}/healthz", timeout=3)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def _probe_embedding_model_readiness() -> bool:
+    """Perform a live embedding provider readiness probe."""
+    try:
+        if EMBEDDING_PROVIDER == "google":
+            from app.services.embedding import _get_google_client
+
+            _get_google_client()
+        else:
+            from app.services.embedding import _get_local_model
+
+            _get_local_model()
+        return True
+    except Exception:
+        return False
+
+
+def _probe_reranker_model_readiness() -> bool:
+    """Perform a live reranker readiness probe."""
+    try:
+        from app.services.reranker import _get_reranker
+
+        _get_reranker()
+        return True
+    except Exception:
+        return False
+
+
+def probe_bootstrap_status(*, refresh_snapshot: bool = False) -> dict[str, bool]:
+    """Return a live readiness snapshot shared by health checks and retrieval gating."""
+    status = {
+        "postgresql_ready": _probe_postgresql_readiness(),
+        "qdrant_ready": _probe_qdrant_readiness(),
+        "embedding_model_ready": _probe_embedding_model_readiness(),
+        "reranker_model_ready": _probe_reranker_model_readiness(),
+    }
+    status["all_ready"] = all(status.values())
+
+    if refresh_snapshot:
+        global _BOOTSTRAP_STATUS
+        _BOOTSTRAP_STATUS = dict(status)
+
+    return status
 
 
 # ---------------------------------------------------------------------------
