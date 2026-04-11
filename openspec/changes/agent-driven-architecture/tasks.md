@@ -143,12 +143,12 @@
 
 ## 15. Chat Agent (Effective)
 
-- [ ] 15.1 TDD: 编写 `tests/test_agent_chat.py` — 测试 chat agent pipeline、streaming、API 契约兼容
-- [ ] 15.2 实现 ChatExecutor：检索 + DeepSeek 流式生成（意图识别内联，不需要完整 PlannerAgent）
-- [ ] 15.3 实现 ChatValidator：citation 一致性校验
-- [ ] 15.4 组装简化 pipeline：`[Executor → Validator]` 拓扑
-- [ ] 15.5 修改 search router：`/api/v1/chat/stream` 改为通过 agent pipeline + CompatibilityAdapter
-- [ ] 15.6 运行 golden snapshot contract test 确认 streaming 格式兼容 → commit: `feat(agents): chat agent pipeline`
+- [x] 15.1 TDD: 编写 `tests/test_agent_chat.py` — 测试 chat agent pipeline、streaming、API 契约兼容
+- [x] 15.2 实现 ChatExecutor：检索 + DeepSeek 流式生成（意图识别内联，不需要完整 PlannerAgent）
+- [x] 15.3 实现 ChatValidator：citation 一致性校验
+- [x] 15.4 组装简化 pipeline：`[Executor → Validator]` 拓扑
+- [x] 15.5 修改 search router：`/api/v1/chat/stream` 改为通过 agent pipeline + CompatibilityAdapter
+- [x] 15.6 运行 golden snapshot contract test 确认 streaming 格式兼容 → commit: `feat(agents): chat agent pipeline`
 
 ## 16. Phase 3 集成验证
 

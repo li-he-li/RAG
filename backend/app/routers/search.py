@@ -265,8 +265,24 @@ async def grounded_chat_stream(
     """Stream chat output with the same grounding pipeline used by /chat."""
     _ensure_retrieval_ready()
     try:
+        from app.agents.chat import stream_chat_pipeline
+        from app.agents.compatibility import CompatibilityAdapter, EndpointContract
+
+        contract = EndpointContract(
+            name="chat_stream",
+            response_mapper=lambda output: output if isinstance(output, dict) else {},
+            public_stream_event_types=frozenset({"start", "delta", "done", "error"}),
+        )
+        adapter = CompatibilityAdapter(contract=contract)
         return StreamingResponse(
-            stream_grounded_chat(request, db),
+            adapter.adapt_stream(
+                stream_chat_pipeline(
+                    {
+                        "request": request.model_dump(),
+                        "db": db,
+                    }
+                )
+            ),
             media_type="application/x-ndjson",
             headers={
                 "Cache-Control": "no-cache",
