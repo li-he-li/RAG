@@ -82,7 +82,9 @@ AND subsequent lookups for that name SHALL raise `PromptNotFoundError`.
 
 ---
 
-### Requirement: DSPy Integration
+### Requirement: DSPy Integration (Phase 4 — Deferred)
+
+> **Deferred to Phase 4.** DSPy integration depends on: (1) trajectory data accumulation ≥200 records with human-annotated golden set, (2) validation that DSPy optimizers work effectively with DeepSeek on Chinese legal text. Phase 1–3 use pure YAML + variable substitution which already satisfies the Updatable requirement.
 
 Each prompt template in the registry SHALL be wrappable as a DSPy Signature for structured LLM calls.
 
@@ -99,6 +101,12 @@ AND the Signature MUST have input fields matching the template's variables and a
 WHEN a DSPy Signature derived from a prompt template is used to make an LLM call
 THEN the system prompt and user prompt segments SHALL be composed in the correct order
 AND the variable substitution MUST be applied before the call.
+
+#### Scenario: DSPy unavailable fallback
+
+WHEN `dspy-ai` is not installed (Phase 1–3 runtime)
+THEN `PromptRegistry.to_dspy_signature()` SHALL raise `NotImplementedError` with a message indicating DSPy is a Phase 4 capability
+AND the registry SHALL function normally for all other operations (load, render, hot-reload, version tracking).
 
 ---
 
@@ -125,6 +133,33 @@ AND the active template SHALL be updated to the new version.
 WHEN a prompt file is modified but the version field remains the same
 THEN the registry SHALL log a warning that the content changed but the version was not bumped
 AND still apply the updated content.
+
+---
+
+### Requirement: Request-Scoped Prompt Version Pinning
+
+The `PromptRegistry` SHALL resolve and pin prompt versions at request start.
+
+Once a pipeline request begins, all prompt lookups for that request MUST use the same resolved prompt versions for the lifetime of the request, even if hot-reload updates the underlying files during execution.
+
+#### Scenario: In-flight request keeps original prompt version
+
+WHEN a pipeline request starts with `contract_review` prompt version `1.3.0`
+AND the prompt file is hot-reloaded to version `1.4.0` while the request is still executing
+THEN the in-flight request SHALL continue using version `1.3.0`
+AND only subsequent new requests MAY use version `1.4.0`.
+
+#### Scenario: Prompt versions captured for replay
+
+WHEN a pipeline request resolves one or more prompt templates
+THEN the registry SHALL expose the resolved prompt names and versions as a request-scoped snapshot
+AND the snapshot SHALL be available to trajectory logging and replay services.
+
+#### Scenario: Mixed-stage pipeline uses consistent prompt versions
+
+WHEN PlannerAgent, ExecutorAgent, and ValidatorAgent each resolve prompt templates during the same request
+THEN each stage SHALL use the request-scoped pinned versions
+AND no stage SHALL observe a newer hot-reloaded version until the next request.
 
 ---
 

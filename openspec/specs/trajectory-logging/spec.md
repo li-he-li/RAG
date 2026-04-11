@@ -119,3 +119,49 @@ AND the executor step entry SHALL include the error details from the original fa
 WHEN replay is invoked
 THEN the system SHALL verify that the output of each step matches the input of the next step
 AND flag any inconsistencies as replay validation warnings.
+
+---
+
+### Requirement: Prompt Snapshot Capture
+
+Trajectory records SHALL capture the prompt versions used by the pipeline request.
+
+The trajectory store MUST persist enough prompt metadata to reconstruct which prompt templates and versions were used for each step.
+
+#### Scenario: Store prompt version with trajectory step
+
+WHEN an agent step uses one or more prompt templates
+THEN the trajectory entry SHALL include the prompt name and resolved version for each template used by that step
+AND the prompt metadata SHALL be queryable together with the step record.
+
+#### Scenario: Replay uses original prompt snapshot
+
+WHEN replay is invoked for a historical session
+THEN the replay service SHALL present the prompt versions used by the original run
+AND missing prompt files in the current filesystem SHALL NOT prevent the replay from identifying the original versions.
+
+---
+
+### Requirement: Trajectory Data Governance
+
+Trajectory storage SHALL apply configurable data governance controls before persisting agent inputs and outputs.
+
+The governance controls MUST support redaction, summary-only storage, explicit full-text opt-in, and retention policies.
+
+#### Scenario: Default trajectory storage redacts sensitive fields
+
+WHEN a trajectory entry contains configured sensitive fields or detected PII
+THEN the stored record SHALL redact or hash those fields according to policy
+AND the persisted record SHALL remain usable for debugging and replay metadata.
+
+#### Scenario: Full-text storage requires explicit opt-in
+
+WHEN full prompt or response bodies are persisted to the trajectory store
+THEN full-text storage SHALL require an explicit configuration flag
+AND the persisted records SHALL be marked as full-text for audit and retention handling.
+
+#### Scenario: Retention policy removes expired trajectory data
+
+WHEN trajectory records exceed the configured retention TTL
+THEN the system SHALL delete or archive the expired records during a scheduled cleanup cycle
+AND the cleanup SHALL be logged with record counts and time range.

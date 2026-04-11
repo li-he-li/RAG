@@ -1,17 +1,17 @@
-# Governance Pipeline
+# Output Governance Pipeline
 
 ## ADDED Requirements
 
-### Requirement: GovernancePipeline Execution
+### Requirement: OutputGovernancePipeline Execution
 
-The system SHALL provide a `GovernancePipeline` that runs after the Validator agent and before the HTTP response is sent.
+The system SHALL provide an `OutputGovernancePipeline` that runs after the Validator agent and before the HTTP response is sent.
 
 The governance pipeline MUST inspect every validated output and enforce content policies before the result reaches the client.
 
-#### Scenario: Governance runs on every validated output
+#### Scenario: Non-streaming governance runs synchronously
 
-WHEN a validated output is produced by the ValidatorAgent
-THEN the governance pipeline SHALL execute synchronously before the response is returned
+WHEN a validated output is produced by the ValidatorAgent for a non-streaming endpoint
+THEN the governance pipeline SHALL execute synchronously before the JSON response is returned
 AND the HTTP response SHALL NOT be sent until governance completes.
 
 #### Scenario: Governance does not modify output on pass
@@ -119,7 +119,50 @@ AND there SHALL be no API or method to disable governance for individual request
 
 WHEN a response is returned via streaming, synchronous return, or error recovery
 THEN governance checks SHALL apply to all paths equally
-AND the streaming path MUST apply governance to each chunk before it is sent.
+AND the enforcement mechanism SHALL use the streaming two-layer strategy defined below.
+
+---
+
+### Requirement: Streaming Two-Layer Governance Strategy
+
+Streaming endpoints SHALL use a two-layer governance strategy. This strategy is fixed and MUST NOT be changed during implementation.
+
+**Layer 1 — Per-Chunk Lightweight Scan:**
+- Each streamed chunk SHALL be scanned against an injection keyword blacklist and known high-risk regex patterns BEFORE it is sent to the client.
+- PII detection and schema validation SHALL NOT run per-chunk (PII patterns may span chunk boundaries; partial JSON cannot be schema-validated).
+- If a chunk matches a suspicious pattern, the stream SHALL be terminated immediately with a `governance_blocked` event.
+
+**Layer 2 — Post-Stream Aggregated Governance:**
+- After the stream completes normally (all chunks sent), the full concatenated output SHALL be subjected to complete governance: PII detection, schema validation, and deep injection detection.
+- If any check fails, a `governance_retracted` event SHALL be appended to notify the client that prior content should be treated as invalid.
+
+Non-streaming endpoints SHALL only use the aggregated governance layer (Layer 2), applied synchronously before the JSON response is sent.
+
+#### Scenario: Per-chunk scan blocks suspicious chunk
+
+WHEN a streamed chunk matches an injection keyword blacklist pattern
+THEN the stream SHALL be terminated immediately
+AND a `governance_blocked` NDJSON event SHALL be sent as the final event
+AND an audit log entry SHALL be created with decision=`block`, layer=`per_chunk`.
+
+#### Scenario: Post-stream aggregated check passes
+
+WHEN all chunks have been streamed and the full concatenated output passes PII, schema, and injection checks
+THEN no additional governance event SHALL be emitted
+AND an audit log entry SHALL be created with decision=`pass`, layer=`post_stream`.
+
+#### Scenario: Post-stream aggregated check fails
+
+WHEN the full concatenated output fails a governance check (e.g., PII detected spanning two chunks)
+THEN a `governance_retracted` NDJSON event SHALL be appended to the stream
+AND the event MUST include the violated rule and a message instructing the client to discard prior content
+AND an audit log entry SHALL be created with decision=`retract`, layer=`post_stream`.
+
+#### Scenario: Non-streaming endpoint uses aggregated governance only
+
+WHEN a non-streaming endpoint produces a validated output
+THEN only the aggregated governance checks SHALL run (PII + schema + injection)
+AND per-chunk scanning SHALL NOT apply.
 
 ---
 

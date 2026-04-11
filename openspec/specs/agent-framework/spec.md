@@ -104,23 +104,39 @@ AND the rejection MUST indicate which rules failed and the associated field valu
 
 ### Requirement: AgentPipeline
 
-The system SHALL provide an `AgentPipeline` that chains Planner, Executor, and Validator with streaming support.
+The system SHALL provide an `AgentPipeline` that chains agents with streaming support.
 
 The pipeline MUST:
-- Accept a user request and route it through Planner -> Executor -> Validator
+- Support three topologies: `[Executor]`, `[Executor → Validator]`, `[Planner → Executor → Validator]`
+- Accept a user request and route it through the configured agent chain
 - Support streaming: yield partial results as NDJSON events via an async generator
 - Be compatible with `fastapi.responses.StreamingResponse`
 
 #### Scenario: Full pipeline produces final validated result
 
-WHEN a user request is submitted to `AgentPipeline.run()`
+WHEN a user request is submitted to `AgentPipeline.run()` with topology `[Planner → Executor → Validator]`
 THEN the pipeline SHALL invoke PlannerAgent, then ExecutorAgent, then ValidatorAgent in sequence
 AND return the final `ValidatedOutput`.
+
+#### Scenario: Simplified pipeline without Planner
+
+WHEN an `AgentPipeline` is constructed with topology `[Executor → Validator]` (Planner omitted)
+THEN `AgentPipeline.run()` SHALL pass the user request directly to the ExecutorAgent
+AND the ExecutorAgent's output SHALL be forwarded to the ValidatorAgent
+AND no PlannerAgent step SHALL execute.
+
+#### Scenario: Minimal pipeline with Executor only
+
+WHEN an `AgentPipeline` is constructed with topology `[Executor]` (both Planner and Validator omitted)
+THEN `AgentPipeline.run()` SHALL pass the user request directly to the ExecutorAgent
+AND the ExecutorAgent's raw output SHALL be returned as the pipeline result
+AND no Planner or Validator step SHALL execute.
 
 #### Scenario: Pipeline streams intermediate events
 
 WHEN a user request is submitted to `AgentPipeline.stream()`
 THEN the pipeline SHALL yield NDJSON events for each agent transition (plan_created, step_started, step_completed, validation_passed)
+AND events for omitted stages SHALL NOT be emitted
 AND the event stream MUST be consumable by `StreamingResponse`.
 
 #### Scenario: Pipeline propagates validation rejection

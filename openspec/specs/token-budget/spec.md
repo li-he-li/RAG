@@ -10,13 +10,13 @@ The manager MUST provide a method to estimate the token count for any string inp
 
 #### Scenario: Estimate tokens for a string
 
-WHEN `TokenBudgetManager.estimate_tokens("Analyze this contract clause", model="gpt-4")` is called
-THEN the method SHALL return an integer token count estimated by tiktoken
-AND the count MUST be within plus or minus 2 tokens of the actual tokenizer output.
+WHEN `TokenBudgetManager.estimate_tokens("Analyze this contract clause", model="deepseek-chat")` is called
+THEN the method SHALL return an integer token count estimated by tiktoken (cl100k_base)
+AND the count SHALL be treated as an approximation with a configurable safety margin applied.
 
 #### Scenario: Estimate tokens for empty string
 
-WHEN `TokenBudgetManager.estimate_tokens("", model="gpt-4")` is called
+WHEN `TokenBudgetManager.estimate_tokens("", model="deepseek-chat")` is called
 THEN the method SHALL return 0.
 
 #### Scenario: Unsupported model falls back to default tokenizer
@@ -24,6 +24,14 @@ THEN the method SHALL return 0.
 WHEN an unrecognized model name is provided
 THEN the manager SHALL fall back to the `cl100k_base` tokenizer
 AND log a warning that the model-specific tokenizer was not found.
+
+#### Scenario: Safety margin applied to all estimates
+
+WHEN a token count is estimated
+THEN the manager SHALL apply a default safety margin of 25% (i.e., effective budget = context_window × 0.75)
+AND the safety margin SHALL be configurable via application settings.
+
+> **Design note**: DeepSeek-V2/V3 uses a custom BPE tokenizer that diverges significantly from cl100k_base on Chinese text (measured deviation up to 20–30%). The 25% margin absorbs this gap. If exact counting is needed, the TokenBudgetManager interface supports swapping in the DeepSeek official tokenizer (`transformers.AutoTokenizer`) without changing callers.
 
 ---
 
@@ -120,10 +128,16 @@ AND the record MUST include both prompt and completion token counts.
 
 WHEN actual usage is recorded
 THEN the manager SHALL compute the delta between estimated and actual tokens
-AND log a warning if the actual usage exceeds the estimate by more than 10%.
+AND log a warning if the actual usage exceeds the estimate by more than 15%.
+
+#### Scenario: Adaptive calibration adjusts safety margin
+
+WHEN the ratio of actual-to-estimated token counts deviates by more than 15% consistently over the last 20 requests
+THEN the manager SHALL automatically adjust the calibration coefficient for subsequent estimates
+AND the adjustment SHALL be logged as a telemetry event with old and new coefficients.
 
 #### Scenario: Usage statistics queryable by time range
 
 WHEN a query is made for token usage within a time range
-THEN the manager SHALL return aggregated usage statistics including: total_tokens, avg_per_request, max_single_request
+THEN the manager SHALL return aggregated usage statistics including: total_tokens, avg_per_request, max_single_request, avg_estimation_accuracy
 AND the statistics MUST be filterable by agent name or pipeline type.
