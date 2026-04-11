@@ -12,6 +12,7 @@ from typing import Any
 from app.agents.orchestrator import IntentRouter, OrchestratorAgent
 from app.agents.pipeline import AgentPipeline
 from app.agents.registry import SkillRegistry
+from app.routers.trajectory import get_trajectory_store
 
 logger = logging.getLogger(__name__)
 
@@ -30,22 +31,36 @@ class PipelineFactory:
 
 def _build_registry() -> SkillRegistry:
     """Build and populate the SkillRegistry with all pipeline factories."""
+    from app.services.trajectory.logger import TrajectoryLogger
+
     registry = SkillRegistry()
+    store = get_trajectory_store()
+
+    def _make_logger(session_id: str) -> TrajectoryLogger:
+        return TrajectoryLogger(session_id=session_id, trajectory_store=store)
 
     def _create_chat_pipeline(**kw: Any) -> AgentPipeline:
         from app.agents.chat import create_chat_pipeline
+        session_id = kw.get("session_id", "default")
+        kw.setdefault("trajectory_logger", _make_logger(session_id))
         return create_chat_pipeline(**kw)
 
     def _create_similar_case_pipeline(**kw: Any) -> AgentPipeline:
         from app.agents.similar_case import create_similar_case_pipeline
+        session_id = kw.get("session_id", "default")
+        kw.setdefault("trajectory_logger", _make_logger(session_id))
         return create_similar_case_pipeline(**kw)
 
     def _create_contract_review_pipeline(**kw: Any) -> AgentPipeline:
         from app.agents.contract_review import create_contract_review_pipeline
+        session_id = kw.get("session_id", "default")
+        kw.setdefault("trajectory_logger", _make_logger(session_id))
         return create_contract_review_pipeline(**kw)
 
     def _create_opponent_prediction_pipeline(**kw: Any) -> AgentPipeline:
         from app.agents.opponent_prediction import create_opponent_prediction_pipeline
+        session_id = kw.get("session_id", "default")
+        kw.setdefault("trajectory_logger", _make_logger(session_id))
         return create_opponent_prediction_pipeline(**kw)
 
     registry.register(

@@ -51,15 +51,18 @@ class TrajectoryLogger:
     - Prompt version snapshot capture
     - Non-blocking in-memory recording
     - TTL-based cleanup
+    - Optional write-through to TrajectoryStore for DSPy optimization
     """
 
     def __init__(
         self,
         session_id: str,
         governance_policy: DataGovernancePolicy | None = None,
+        trajectory_store: Any | None = None,
     ) -> None:
         self._session_id = session_id
         self._governance = governance_policy or default_governance_policy()
+        self._store = trajectory_store
         self._records: list[dict[str, Any]] = []
 
     @property
@@ -114,6 +117,23 @@ class TrajectoryLogger:
                 record["error"] = error
 
             self._records.append(record)
+
+            # Write through to TrajectoryStore for DSPy optimization pipeline
+            if self._store is not None:
+                try:
+                    self._store.save(
+                        session_id=self._session_id,
+                        agent_name=agent_name,
+                        step_type=step_type,
+                        input_hash=input_hash,
+                        output=governed_output,
+                        duration_ms=float(duration_ms),
+                        token_usage=dict(token_usage) if token_usage else None,
+                        prompt_versions=dict(prompt_versions) if prompt_versions else None,
+                    )
+                except Exception as store_exc:
+                    logger.warning("TrajectoryStore write-through failed: %s", store_exc)
+
             return record
 
         except Exception as exc:

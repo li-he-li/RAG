@@ -14,19 +14,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.trajectory.store import InMemoryTrajectoryStore
+from app.routers.trajectory import get_trajectory_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-
-# Shared trajectory store reference
-_trajectory_store: InMemoryTrajectoryStore | None = None
-
-
-def set_trajectory_store(store: InMemoryTrajectoryStore) -> None:
-    global _trajectory_store
-    _trajectory_store = store
 
 
 class ExportDatasetRequest(BaseModel):
@@ -42,24 +34,24 @@ class OptimizePromptRequest(BaseModel):
     max_bootstrapped_demos: int = 4
 
 
+def _get_store_records() -> list[dict[str, Any]]:
+    """Get all records from the global trajectory store."""
+    store = get_trajectory_store()
+    if hasattr(store, 'records'):
+        return [r for r in store.records if isinstance(r, dict)]
+    return []
+
+
 @router.post("/export-dspy-dataset")
 async def export_dspy_dataset(request: ExportDatasetRequest) -> dict[str, Any]:
     """Export trajectory records as DSPy-compatible dataset."""
-    if _trajectory_store is None:
-        raise HTTPException(status_code=503, detail="trajectory store not initialized")
-
     try:
         from app.prompts.optimization import export_trajectory_evalset
         import dspy  # type: ignore
 
-        records = list(_trajectory_store._records.values()) if hasattr(_trajectory_store, '_records') else []
-        flat_records: list[dict[str, Any]] = []
-        for rec in records:
-            if isinstance(rec, dict):
-                flat_records.append(rec)
-
+        records = _get_store_records()
         examples = export_trajectory_evalset(
-            records=flat_records,
+            records=records,
             prompt_name=request.prompt_name,
             input_keys=tuple(request.input_keys),
             output_key=request.output_key,
@@ -81,9 +73,6 @@ async def export_dspy_dataset(request: ExportDatasetRequest) -> dict[str, Any]:
 @router.post("/optimize-prompt")
 async def optimize_prompt(request: OptimizePromptRequest) -> dict[str, Any]:
     """Trigger DSPy prompt optimization on demand."""
-    if _trajectory_store is None:
-        raise HTTPException(status_code=503, detail="trajectory store not initialized")
-
     try:
         import dspy  # type: ignore
         from app.prompts.optimization import (
@@ -92,16 +81,13 @@ async def optimize_prompt(request: OptimizePromptRequest) -> dict[str, Any]:
             optimize_prompt_module,
             export_trajectory_evalset,
         )
-        from app.prompts.registry import PromptRegistry
     except ImportError as e:
         raise HTTPException(status_code=503, detail=f"missing dependency: {e}")
 
-    # Export dataset
-    records = list(_trajectory_store._records.values()) if hasattr(_trajectory_store, '_records') else []
-    flat_records = [rec for rec in records if isinstance(rec, dict)]
-
+    # Export dataset from trajectory store
+    records = _get_store_records()
     examples = export_trajectory_evalset(
-        records=flat_records,
+        records=records,
         prompt_name=request.prompt_name,
         input_keys=tuple(request.input_keys),
         output_key=request.output_key,
@@ -119,32 +105,64 @@ async def optimize_prompt(request: OptimizePromptRequest) -> dict[str, Any]:
     trainset = examples[:split]
     evalset = examples[split:]
 
-    registry = PromptRegistry()
-    module = create_prompt_optimization_module(
-        registry, request.prompt_name, dspy_module=dspy,
-    )
-    metric = create_exact_match_metric(request.output_key)
-    optimizer = create_bootstrap_optimizer(
-        dspy_module=dspy,
-        metric=metric,
-        max_bootstrapped_demos=request.max_bootstrapped_demos,
-    )
+    try:
+        from app.prompts.registry import PromptRegistry
+        from app.prompts.optimization import create_exact_match_metric
 
-    result = optimize_prompt_module(
-        module=module,
-        optimizer=optimizer,
-        trainset=trainset,
-        evalset=evalset,
-        metric=metric,
-    )
+        registry = PromptRegistry()
+        module = create_prompt_optimization_module(
+            registry, request.prompt_name, dspy_module=dspy,
+        )
+        metric = create_exact_match_metric(request.output_key)
+        optimizer = create_bootstrap_optimizer(
+            dspy_module=dspy,
+            metric=metric,
+            max_bootstrapped_demos=request.max_bootstrapped_demos,
+        )
 
-    return {
-        "prompt_name": request.prompt_name,
-        "validation_score": result.validation_score,
-        "compiled": result.compiled,
-        "train_examples": len(trainset),
-        "eval_examples": len(evalset),
-    }
+        result = optimize_prompt_module(
+            module=module,
+            optimizer=optimizer,
+            trainset=trainset,
+            evalset=evalset,
+            metric=metric,
+        )
+
+        # Register optimized variant back into PromptRegistry
+        if result.compiled:
+            try:
+                from app.prompts.registry import PromptSegment, PromptTemplate
+                from pathlib import Path
+
+                variant_name = f"{request.prompt_name}_optimized_v{result.validation_score:.2f}"
+                variant_template = PromptTemplate(
+                    name=variant_name,
+                    version=f"dspy-optimized-{result.validation_score:.2f}",
+                    segments=(
+                        PromptSegment(
+                            role="system",
+                            content=str(result.compiled) if result.compiled else "",
+                        ),
+                    ),
+                    variables=tuple(request.input_keys),
+                    source_path=Path("dspy://optimized"),
+                )
+                registry._templates[variant_name] = variant_template
+                logger.info("Registered optimized prompt variant: %s (score=%.3f)", variant_name, result.validation_score)
+            except Exception as reg_exc:
+                logger.warning("Failed to register optimized variant: %s", reg_exc)
+
+        return {
+            "prompt_name": request.prompt_name,
+            "validation_score": result.validation_score,
+            "compiled": result.compiled is not None,
+            "variant_name": f"{request.prompt_name}_optimized_v{result.validation_score:.2f}" if result.compiled else None,
+            "train_examples": len(trainset),
+            "eval_examples": len(evalset),
+        }
+    except Exception as e:
+        logger.exception("DSPy optimization failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/prompt-variants/{prompt_name}")
@@ -154,11 +172,18 @@ async def list_prompt_variants(prompt_name: str) -> dict[str, Any]:
         from app.prompts.registry import PromptRegistry
 
         registry = PromptRegistry()
-        template = registry.get_template(prompt_name)
+        variants = []
+        for name, template in registry._templates.items():
+            if name.startswith(prompt_name):
+                variants.append({
+                    "name": name,
+                    "version": template.version,
+                })
+        current = registry._templates.get(prompt_name)
         return {
             "prompt_name": prompt_name,
-            "current_version": template.version if template else None,
-            "variants": [],  # populated when optimization variants are registered
+            "current_version": current.version if current else None,
+            "variants": variants,
         }
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"prompt '{prompt_name}' not found: {e}")
