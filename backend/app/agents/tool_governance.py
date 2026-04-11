@@ -171,10 +171,12 @@ class ToolGovernancePolicy:
         registry: ToolRegistry | None = None,
         audit_log: ToolAuditLog | None = None,
         approval_policy: Callable[[ToolInvocation], bool] | None = None,
+        max_recursion_depth: int = 3,
     ) -> None:
         self.registry = registry or ToolRegistry()
         self.audit_log = audit_log or ToolAuditLog()
         self.approval_policy = approval_policy
+        self.max_recursion_depth = max_recursion_depth
 
     async def invoke(
         self,
@@ -190,6 +192,19 @@ class ToolGovernancePolicy:
                 tool_name=tool_name,
                 reason="tool_not_allowed",
                 metadata={"arguments": dict(arguments)},
+            )
+
+        # Recursion depth check for agent-to-agent calls
+        recursion_depth = arguments.get("_recursion_depth", 0)
+        if isinstance(recursion_depth, int) and recursion_depth >= self.max_recursion_depth:
+            self._block(
+                agent_name=agent_name,
+                tool_name=tool_name,
+                reason="recursion_depth_exceeded",
+                metadata={
+                    "current_depth": recursion_depth,
+                    "max_depth": self.max_recursion_depth,
+                },
             )
 
         normalized = self._validate_arguments(tool, arguments, agent_name=agent_name)
