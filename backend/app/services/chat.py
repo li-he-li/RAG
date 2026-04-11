@@ -25,9 +25,17 @@ from app.services.embedding import encode_single
 from app.services.retrieval import dual_retrieve, rank_and_aggregate, understand_query
 from app.services.session_files import session_temp_file_store
 from app.services.traceability import validate_and_enrich_results
+from app.services.memory.context_assembler import assemble_context, estimate_token_count
+from app.services.memory.store import InMemoryMemoryStore
 from app.utils.streaming import encode_stream_event as _encode_stream_event, iter_text_chunks as _iter_text_chunks
 
 logger = logging.getLogger(__name__)
+
+# Global memory store singleton
+_memory_store = InMemoryMemoryStore()
+
+# Token budget for conversation history (in estimated tokens)
+_HISTORY_TOKEN_BUDGET = 2000
 
 MIN_CITATION_SCORE = 0.45
 _NON_RETRIEVAL_TEXT_RE = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -314,8 +322,9 @@ def _build_deepseek_payload(
     retrieval_input: ChatRetrievalInput,
     *,
     stream: bool,
+    history_messages: list[dict[str, str]] | None = None,
 ) -> dict:
-    """Build a DeepSeek chat-completions payload."""
+    """Build a DeepSeek chat-completions payload with optional conversation history."""
     if citations:
         evidence_context = _build_context(citations)
         file_name_hints = _build_related_file_name_block(citations)
@@ -409,7 +418,7 @@ def _build_deepseek_payload(
         "messages": _assemble_messages(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            history_messages=[],
+            history_messages=history_messages or [],
         ),
         "temperature": temperature,
         "max_tokens": 700,
@@ -499,7 +508,13 @@ async def handle_casual_chat(
         return "抱歉，我暂时无法回复，请稍后再试。"
 
 
-async def _ask_deepseek(query: str, citations: list[ChatCitation], retrieval_input: ChatRetrievalInput) -> str:
+async def _ask_deepseek(
+    query: str,
+    citations: list[ChatCitation],
+    retrieval_input: ChatRetrievalInput,
+    *,
+    history_messages: list[dict[str, str]] | None = None,
+) -> str:
     """Ask DeepSeek, grounded when evidence exists, general otherwise."""
     if not DEEPSEEK_API_KEY:
         logger.warning("DEEPSEEK_API_KEY is empty, using fallback answer")
@@ -513,7 +528,11 @@ async def _ask_deepseek(query: str, citations: list[ChatCitation], retrieval_inp
                     "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json=_build_deepseek_payload(query, citations, retrieval_input, stream=False),
+                json=_build_deepseek_payload(
+                    query, citations, retrieval_input,
+                    stream=False,
+                    history_messages=history_messages,
+                ),
             )
     except Exception as exc:
         logger.warning("DeepSeek chat request failed: %s", exc)
@@ -541,6 +560,8 @@ async def _stream_deepseek(
     query: str,
     citations: list[ChatCitation],
     retrieval_input: ChatRetrievalInput,
+    *,
+    history_messages: list[dict[str, str]] | None = None,
 ) -> AsyncIterator[str]:
     """Stream DeepSeek answer tokens, falling back to chunked local text when needed."""
     if not DEEPSEEK_API_KEY:
@@ -558,7 +579,11 @@ async def _stream_deepseek(
                     "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json=_build_deepseek_payload(query, citations, retrieval_input, stream=True),
+                json=_build_deepseek_payload(
+                    query, citations, retrieval_input,
+                    stream=True,
+                    history_messages=history_messages,
+                ),
             ) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode("utf-8", errors="ignore")
@@ -607,13 +632,73 @@ async def _stream_deepseek(
         yield chunk
 
 
+def _load_history_messages(session_id: str | None) -> list[dict[str, str]]:
+    """Load conversation history for a session as DeepSeek-compatible messages."""
+    if not session_id:
+        return []
+    history = _memory_store.load_messages(
+        session_id,
+        token_budget=_HISTORY_TOKEN_BUDGET,
+    )
+    return [{"role": msg.role, "content": msg.content} for msg in history if msg.role in ("user", "assistant")]
+
+
 async def execute_grounded_chat(
     request: ChatRequest,
     db: Session,
 ) -> ChatResponse:
-    """Execute grounded chat over indexed legal evidence."""
+    """Execute grounded chat over indexed legal evidence with conversation memory."""
+    session_id = _normalize_session_id(request.session_id)
+
+    # Save user message to memory
+    if session_id:
+        _memory_store.save_message(
+            session_id=session_id,
+            role="user",
+            content=request.query,
+            token_count=estimate_token_count(request.query),
+        )
+
+    # Casual chat path: skip retrieval, use memory-only context
+    if _should_skip_retrieval(request.query):
+        history = _load_history_messages(session_id)
+        answer = await handle_casual_chat(
+            request.query,
+            history_messages=history,
+        )
+        if session_id:
+            _memory_store.save_message(
+                session_id=session_id,
+                role="assistant",
+                content=answer,
+                token_count=estimate_token_count(answer),
+            )
+        return ChatResponse(
+            query=request.query,
+            answer=answer,
+            citations=[],
+            grounded=False,
+            used_documents=0,
+        )
+
+    # Grounded path: retrieve + answer with history
     citations, retrieval_input = _collect_citations(request, db)
-    answer = await _ask_deepseek(request.query, citations, retrieval_input)
+    history = _load_history_messages(session_id)
+    answer = await _ask_deepseek(
+        request.query,
+        citations,
+        retrieval_input,
+        history_messages=history,
+    )
+
+    # Save assistant response to memory
+    if session_id:
+        _memory_store.save_message(
+            session_id=session_id,
+            role="assistant",
+            content=answer,
+            token_count=estimate_token_count(answer),
+        )
 
     return ChatResponse(
         query=request.query,
@@ -630,8 +715,47 @@ async def stream_grounded_chat(
     request: ChatRequest,
     db: Session,
 ) -> AsyncIterator[str]:
-    """Stream grounded chat as NDJSON events for the frontend."""
+    """Stream grounded chat as NDJSON events for the frontend with memory."""
+    session_id = _normalize_session_id(request.session_id)
+
+    # Save user message to memory
+    if session_id:
+        _memory_store.save_message(
+            session_id=session_id,
+            role="user",
+            content=request.query,
+            token_count=estimate_token_count(request.query),
+        )
+
+    # Casual chat path for streaming
+    if _should_skip_retrieval(request.query):
+        history = _load_history_messages(session_id)
+        answer = await handle_casual_chat(
+            request.query,
+            history_messages=history,
+        )
+        if session_id:
+            _memory_store.save_message(
+                session_id=session_id,
+                role="assistant",
+                content=answer,
+                token_count=estimate_token_count(answer),
+            )
+        yield _encode_stream_event({"type": "start", "query": request.query, "grounded": False, "used_documents": 0})
+        yield _encode_stream_event({"type": "delta", "delta": answer})
+        yield _encode_stream_event({
+            "type": "done",
+            "query": request.query,
+            "answer": answer,
+            "citations": [],
+            "grounded": False,
+            "used_documents": 0,
+        })
+        return
+
+    # Grounded streaming path
     citations, retrieval_input = _collect_citations(request, db)
+    history = _load_history_messages(session_id)
     grounded = bool(citations)
     used_documents = len({c.doc_id for c in citations})
     answer_parts: list[str] = []
@@ -648,12 +772,25 @@ async def stream_grounded_chat(
     )
 
     try:
-        async for chunk in _stream_deepseek(request.query, citations, retrieval_input):
+        async for chunk in _stream_deepseek(
+            request.query, citations, retrieval_input,
+            history_messages=history,
+        ):
             answer_parts.append(chunk)
             yield _encode_stream_event({"type": "delta", "delta": chunk})
 
         answer = "".join(answer_parts).strip() or _fallback_answer(citations, query=request.query)
         answer = _prepend_related_file_names(answer, citations)
+
+        # Save assistant response to memory
+        if session_id:
+            _memory_store.save_message(
+                session_id=session_id,
+                role="assistant",
+                content=answer,
+                token_count=estimate_token_count(answer),
+            )
+
         yield _encode_stream_event(
             {
                 "type": "done",
