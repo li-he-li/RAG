@@ -72,6 +72,44 @@ def _build_registry() -> SkillRegistry:
     return registry
 
 
+def register_agents_as_tools(governance: Any = None) -> None:
+    """Register all business agents as tools in the ToolRegistry."""
+    from app.agents.agent_tool import AgentTool
+    from app.agents.tool_governance import ToolGovernancePolicy, ToolRegistry, ToolSideEffectLevel
+    from pydantic import BaseModel
+
+    class ToolInput(BaseModel):
+        class Config:
+            extra = "allow"
+
+    policy = governance or ToolGovernancePolicy()
+    registry = policy.registry
+
+    agents_to_register = [
+        ("similar_case_search", "app.agents.similar_case", "SimilarCaseExecutor"),
+        ("grounded_chat", "app.agents.chat", "ChatExecutor"),
+        ("contract_review", "app.agents.contract_review", "ContractReviewExecutor"),
+        ("opponent_prediction", "app.agents.opponent_prediction", "PredictionExecutor"),
+    ]
+
+    for tool_name, module_path, class_name in agents_to_register:
+        try:
+            import importlib
+            module = importlib.import_module(module_path)
+            agent_class = getattr(module, class_name)
+            agent_instance = agent_class()
+            tool = AgentTool(agent_instance)
+            registry.register(
+                name=tool_name,
+                func=tool,
+                args_schema=ToolInput,
+                side_effect_level=ToolSideEffectLevel.READ_ONLY,
+            )
+            logger.info("Registered agent tool: %s", tool_name)
+        except Exception as exc:
+            logger.warning("Failed to register agent tool %s: %s", tool_name, exc)
+
+
 def get_orchestrator() -> OrchestratorAgent:
     """Get or create the singleton OrchestratorAgent."""
     global _orchestrator

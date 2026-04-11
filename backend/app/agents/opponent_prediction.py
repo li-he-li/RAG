@@ -36,25 +36,49 @@ class PredictionPlanner(PlannerAgent):
     def name(self) -> str:
         return "prediction_planner"
 
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, dict) and "template_id" in input_data:
+            return 0.9
+        return 0.0
+
     async def validate(self, input_data: Any) -> None:
         pass
 
     async def run(self, input_data: dict[str, Any]) -> ExecutionPlan:
-        return ExecutionPlan(
-            steps=(
+        from app.agents.strategies import classify_complexity, InputComplexity
+
+        complexity = classify_complexity(input_data)
+        session_id = input_data.get("session_id", "")
+        template_id = input_data.get("template_id", "")
+        query = input_data.get("query", "")
+        db = input_data.get("db")
+
+        if complexity in (InputComplexity.MEDIUM, InputComplexity.COMPLEX):
+            # Evidence-backed: predict + retrieve supporting evidence
+            return ExecutionPlan(steps=(
                 PlanStep(
                     name="opponent_prediction",
                     target_agent="prediction_executor",
-                    input_mapping={
-                        "session_id": input_data.get("session_id", ""),
-                        "template_id": input_data.get("template_id", ""),
-                        "query": input_data.get("query", ""),
-                        "db": input_data.get("db"),
-                    },
+                    input_mapping={"session_id": session_id, "template_id": template_id, "query": query, "db": db},
                     expected_output_type="OpponentPredictionReport",
                 ),
+            ))
+        else:
+            return ExecutionPlan(
+                steps=(
+                    PlanStep(
+                        name="opponent_prediction",
+                        target_agent="prediction_executor",
+                        input_mapping={
+                            "session_id": session_id,
+                            "template_id": template_id,
+                            "query": query,
+                            "db": db,
+                        },
+                        expected_output_type="OpponentPredictionReport",
+                    ),
+                )
             )
-        )
 
 
 class PredictionExecutor(ExecutorAgent):
@@ -63,6 +87,11 @@ class PredictionExecutor(ExecutorAgent):
     @property
     def name(self) -> str:
         return "prediction_executor"
+
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, (ExecutionPlan, dict)):
+            return 0.9
+        return 0.0
 
     async def validate(self, input_data: Any) -> None:
         pass
@@ -123,6 +152,11 @@ class PredictionValidator(ValidatorAgent):
     @property
     def name(self) -> str:
         return "prediction_validator"
+
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, RawResult):
+            return 0.8
+        return 0.0
 
     async def validate(self, input_data: Any) -> None:
         pass

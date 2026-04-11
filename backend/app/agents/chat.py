@@ -31,6 +31,13 @@ class ChatExecutor(ExecutorAgent):
     def name(self) -> str:
         return "chat_executor"
 
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, dict):
+            req = input_data.get("request")
+            if isinstance(req, dict) and "query" in req:
+                return 0.9
+        return 0.0
+
     async def validate(self, input_data: Any) -> None:
         pass
 
@@ -72,6 +79,11 @@ class ChatValidator(ValidatorAgent):
     @property
     def name(self) -> str:
         return "chat_validator"
+
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, RawResult) and input_data.status in ("success", "error"):
+            return 0.8
+        return 0.0
 
     async def validate(self, input_data: Any) -> None:
         pass

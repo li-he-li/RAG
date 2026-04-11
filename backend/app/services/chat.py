@@ -52,6 +52,14 @@ _NON_RETRIEVAL_QUERIES = {
     "你是谁",
     "你能做什么",
     "你会什么",
+    "能再说一遍吗",
+    "还有呢",
+    "好的",
+    "嗯嗯",
+    "明白",
+    "知道了",
+    "继续",
+    "然后呢",
 }
 _NON_RETRIEVAL_PREFIXES = (
     "你好",
@@ -398,16 +406,97 @@ def _build_deepseek_payload(
 
     payload = {
         "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": _assemble_messages(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            history_messages=[],
+        ),
         "temperature": temperature,
         "max_tokens": 700,
     }
     if stream:
         payload["stream"] = True
     return payload
+
+
+def _assemble_messages(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    history_messages: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Assemble messages array: [system, ...history, user]."""
+    messages = [{"role": "system", "content": system_prompt}]
+    for msg in history_messages:
+        messages.append(msg)
+    messages.append({"role": "user", "content": user_prompt})
+    return messages
+
+
+def build_memory_aware_payload(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    history_messages: list[dict[str, str]],
+    temperature: float = 0.3,
+    stream: bool = False,
+) -> dict:
+    """Build DeepSeek payload with conversation history injected."""
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": _assemble_messages(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            history_messages=history_messages,
+        ),
+        "temperature": temperature,
+        "max_tokens": 700,
+    }
+    if stream:
+        payload["stream"] = True
+    return payload
+
+
+CASUAL_SYSTEM_PROMPT = (
+    "你是一个友好的法律助手。你可以轻松地闲聊，也可以回答法律问题。"
+    "如果用户问法律问题，请基于你的知识给出建议，并建议用户上传相关文档获取精确答案。"
+    "保持对话自然流畅。"
+)
+
+
+async def handle_casual_chat(
+    query: str,
+    *,
+    history_messages: list[dict[str, str]] | None = None,
+    stream: bool = False,
+) -> str:
+    """Handle casual chat using memory context, no retrieval pipeline."""
+    if not DEEPSEEK_API_KEY:
+        return "你好！我是法律助手，有什么可以帮你的？"
+
+    payload = build_memory_aware_payload(
+        system_prompt=CASUAL_SYSTEM_PROMPT,
+        user_prompt=query,
+        history_messages=history_messages or [],
+        temperature=0.5,
+        stream=stream,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{DEEPSEEK_BASE_URL}/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        logger.exception("Casual chat failed: %s", exc)
+        return "抱歉，我暂时无法回复，请稍后再试。"
 
 
 async def _ask_deepseek(query: str, citations: list[ChatCitation], retrieval_input: ChatRetrievalInput) -> str:

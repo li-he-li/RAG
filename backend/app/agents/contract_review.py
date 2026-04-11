@@ -41,25 +41,56 @@ class ContractReviewPlanner(PlannerAgent):
     def name(self) -> str:
         return "contract_review_planner"
 
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, dict) and "session_id" in input_data:
+            return 0.9
+        return 0.0
+
     async def validate(self, input_data: Any) -> None:
         pass
 
     async def run(self, input_data: dict[str, Any]) -> ExecutionPlan:
-        # Pass through the input data as the execution plan
-        return ExecutionPlan(
-            steps=(
+        # Dynamic strategy selection based on input complexity
+        from app.agents.strategies import classify_complexity, InputComplexity
+
+        complexity = classify_complexity(input_data)
+        session_id = input_data.get("session_id", "")
+        template_id = input_data.get("template_id", "")
+        query = input_data.get("query", "")
+        db = input_data.get("db")
+        dispute_tags = input_data.get("dispute_tags")
+
+        if complexity == InputComplexity.COMPLEX:
+            # Multi-step plan: analyze + retrieve + cross-reference
+            return ExecutionPlan(steps=(
                 PlanStep(
                     name="contract_review",
                     target_agent="contract_review_executor",
-                    input_mapping={
-                        "session_id": input_data.get("session_id", ""),
-                        "template_id": input_data.get("template_id", ""),
-                        "query": input_data.get("query", ""),
-                        "db": input_data.get("db"),
-                    },
+                    input_mapping={"session_id": session_id, "template_id": template_id, "query": query, "db": db},
                 ),
-            ),
-        )
+                PlanStep(
+                    name="cross_reference_similar_cases",
+                    target_agent="contract_review_executor",
+                    condition="dispute_tags != None",
+                    input_mapping={"session_id": session_id, "template_id": template_id, "query": query, "db": db, "dispute_tags": dispute_tags},
+                ),
+            ))
+        else:
+            # Simple single-step plan
+            return ExecutionPlan(
+                steps=(
+                    PlanStep(
+                        name="contract_review",
+                        target_agent="contract_review_executor",
+                        input_mapping={
+                            "session_id": session_id,
+                            "template_id": template_id,
+                            "query": query,
+                            "db": db,
+                        },
+                    ),
+                ),
+            )
 
 
 class ContractReviewExecutor(ExecutorAgent):
@@ -68,6 +99,11 @@ class ContractReviewExecutor(ExecutorAgent):
     @property
     def name(self) -> str:
         return "contract_review_executor"
+
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, (ExecutionPlan, dict)) and "session_id" in (input_data.steps[0].input_mapping if isinstance(input_data, ExecutionPlan) else input_data):
+            return 0.9
+        return 0.0
 
     async def validate(self, input_data: Any) -> None:
         pass
@@ -149,6 +185,11 @@ class ContractReviewValidator(ValidatorAgent):
     @property
     def name(self) -> str:
         return "contract_review_validator"
+
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, RawResult):
+            return 0.8
+        return 0.0
 
     async def validate(self, input_data: Any) -> None:
         pass

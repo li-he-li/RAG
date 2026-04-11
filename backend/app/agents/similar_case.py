@@ -30,6 +30,11 @@ class SimilarCaseExecutor(ExecutorAgent):
     def name(self) -> str:
         return "similar_case_executor"
 
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, dict) and "request" in input_data:
+            return 0.9
+        return 0.0
+
     async def validate(self, input_data: Any) -> None:
         if not isinstance(input_data, dict):
             return
@@ -81,6 +86,11 @@ class SimilarCaseValidator(ValidatorAgent):
     @property
     def name(self) -> str:
         return "similar_case_validator"
+
+    async def can_handle(self, input_data: Any) -> float:
+        if isinstance(input_data, RawResult):
+            return 0.8
+        return 0.0
 
     async def validate(self, input_data: Any) -> None:
         pass  # Accept any input
