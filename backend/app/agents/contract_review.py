@@ -67,11 +67,20 @@ class ContractReviewExecutor(ExecutorAgent):
     async def validate(self, input_data: Any) -> None:
         pass
 
-    async def run(self, input_data: dict[str, Any]) -> RawResult:
+    @staticmethod
+    def _resolve_input(input_data: ExecutionPlan | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(input_data, ExecutionPlan):
+            if not input_data.steps:
+                return {}
+            return dict(input_data.steps[0].input_mapping)
+        return input_data
+
+    async def run(self, input_data: ExecutionPlan | dict[str, Any]) -> RawResult:
         try:
-            session_id = input_data.get("session_id", "")
-            template_id = input_data.get("template_id", "")
-            db = input_data.get("db")
+            resolved_input = self._resolve_input(input_data)
+            session_id = resolved_input.get("session_id", "")
+            template_id = resolved_input.get("template_id", "")
+            db = resolved_input.get("db")
 
             if not session_id or not template_id or db is None:
                 return RawResult(

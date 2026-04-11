@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app.agents.base import ValidatedOutput
 from app.core.database import get_session
 from app.core.http_errors import internal_error_detail
 from app.models.schemas import (
@@ -21,7 +22,6 @@ from app.models.schemas import (
     PredictionTemplateDetail,
     PredictionTemplateItem,
 )
-from app.services.opponent_prediction import build_prediction_report
 from app.services.prediction_templates import (
     add_prediction_template_assets,
     create_prediction_template,
@@ -182,12 +182,31 @@ async def start_opponent_prediction(
         raise HTTPException(status_code=400, detail="query is required")
 
     try:
-        return await build_prediction_report(
-            db,
-            session_id=session_id,
-            template_id=template_id,
-            query=query,
+        from app.agents.compatibility import CompatibilityAdapter, EndpointContract
+        from app.agents.opponent_prediction import create_opponent_prediction_pipeline
+
+        contract = EndpointContract(
+            name="opponent_prediction_start",
+            response_mapper=lambda output: output if isinstance(output, dict) else {},
+            public_stream_event_types=frozenset(),
         )
+        adapter = CompatibilityAdapter(contract=contract)
+        pipeline = create_opponent_prediction_pipeline()
+        result = await pipeline.run(
+            {
+                "session_id": session_id,
+                "template_id": template_id,
+                "query": query,
+                "db": db,
+            }
+        )
+        if isinstance(result, ValidatedOutput) and result.metadata.get("error"):
+            status_code = int(result.metadata.get("status_code") or 500)
+            detail = result.metadata.get("detail") or internal_error_detail(
+                RuntimeError(str(result.metadata.get("error")))
+            )
+            raise HTTPException(status_code=status_code, detail=detail)
+        return adapter.adapt_response(result)
     except HTTPException:
         db.rollback()
         raise

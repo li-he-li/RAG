@@ -133,13 +133,13 @@
 
 ## 14. 观点预测 Agent (Effective)
 
-- [ ] 14.1 TDD: 编写 `tests/test_agent_opponent_prediction.py` — 测试规划、执行、验证、API 契约兼容
-- [ ] 14.2 实现 PredictionPlanner：案情画像构建、争议焦点推断
-- [ ] 14.3 实现 PredictionExecutor：论点生成、证据检索、论点排序
-- [ ] 14.4 实现 PredictionValidator：报告完整性校验
-- [ ] 14.5 组装全链路 pipeline：`[Planner → Executor → Validator]` 拓扑
-- [ ] 14.6 修改 prediction router：路由改为通过 agent pipeline + CompatibilityAdapter
-- [ ] 14.7 运行 golden snapshot contract test 确认 API 响应格式兼容 → commit: `feat(agents): opponent prediction agent pipeline`
+- [x] 14.1 TDD: 编写 `tests/test_agent_opponent_prediction.py` — 测试规划、执行、验证、API 契约兼容
+- [x] 14.2 实现 PredictionPlanner：案情画像构建、争议焦点推断
+- [x] 14.3 实现 PredictionExecutor：论点生成、证据检索、论点排序
+- [x] 14.4 实现 PredictionValidator：报告完整性校验
+- [x] 14.5 组装全链路 pipeline：`[Planner → Executor → Validator]` 拓扑
+- [x] 14.6 修改 prediction router：路由改为通过 agent pipeline + CompatibilityAdapter
+- [x] 14.7 运行 golden snapshot contract test 确认 API 响应格式兼容 → commit: `feat(agents): opponent prediction agent pipeline`
 
 ## 15. Chat Agent (Effective)
 
