@@ -175,6 +175,6 @@
 
 ## 18. 最终验证
 
-- [ ] 18.1 验证所有 7 项企业要求完全达标
-- [ ] 18.2 编写七项要求 ↔ spec 章节对照表，附录在架构文档中
-- [ ] 18.3 全量测试通过 → commit: `feat(agents): agent-driven architecture complete`
+- [x] 18.1 验证所有 7 项企业要求完全达标
+- [x] 18.2 编写七项要求 ↔ spec 章节对照表，附录在架构文档中
+- [x] 18.3 全量测试通过 → commit: `feat(agents): agent-driven architecture complete`
