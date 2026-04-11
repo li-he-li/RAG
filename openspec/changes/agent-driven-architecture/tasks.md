@@ -164,14 +164,14 @@
 
 ## 17. DSPy 集成 (Updatable + Compounding)
 
-- [ ] 17.1 添加依赖：`dspy-ai>=2.5`
-- [ ] 17.2 TDD: 编写 `tests/test_dspy_signatures.py` — 测试 DSPy Signature 加载和输入输出
-- [ ] 17.3 为每个业务域创建 DSPy Signature：`backend/app/prompts/signatures.py`
-- [ ] 17.4 创建 DSPy Module 包装器，将 YAML prompt 映射到 DSPy Signature
-- [ ] 17.5 从 trajectory 表导出评估集，加载到 DSPy Metric
-- [ ] 17.6 实现优化器配置（BootstrapFewShot），在评估集上验证效果
-- [ ] 17.7 若 DeepSeek 不支持 DSPy meta-prompt，准备 fallback：手动 few-shot 管理 + A/B prompt 比较
-- [ ] 17.8 运行测试确认通过 → commit: `feat(dspy): integrate DSPy for prompt optimization`
+- [x] 17.1 添加依赖：`dspy-ai>=2.5`
+- [x] 17.2 TDD: 编写 `tests/test_dspy_signatures.py` — 测试 DSPy Signature 加载和输入输出
+- [x] 17.3 为每个业务域创建 DSPy Signature：`backend/app/prompts/signatures.py`
+- [x] 17.4 创建 DSPy Module 包装器，将 YAML prompt 映射到 DSPy Signature
+- [x] 17.5 从 trajectory 表导出评估集，加载到 DSPy Metric
+- [x] 17.6 实现优化器配置（BootstrapFewShot），在评估集上验证效果
+- [x] 17.7 若 DeepSeek 不支持 DSPy meta-prompt，准备 fallback：手动 few-shot 管理 + A/B prompt 比较
+- [x] 17.8 运行测试确认通过 → commit: `feat(dspy): integrate DSPy for prompt optimization`
 
 ## 18. 最终验证
 

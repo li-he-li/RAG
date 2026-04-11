@@ -232,9 +232,11 @@ class PromptRegistry:
         pinned = _pinned_templates.get() or {}
         return {name: template.version for name, template in pinned.items()}
 
-    def to_dspy_signature(self, name: str) -> type:
-        self.get_template(name)
-        raise NotImplementedError("DSPy integration is deferred to Phase 4.")
+    def to_dspy_signature(self, name: str, *, dspy_module: Any | None = None) -> type:
+        from app.prompts.signatures import build_dspy_signature
+
+        template = self.get_template(name)
+        return build_dspy_signature(template, dspy_module=dspy_module)
 
     def _watch_loop(self) -> None:
         if not self.prompt_dir.exists():

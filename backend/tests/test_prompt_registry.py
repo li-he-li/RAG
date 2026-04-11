@@ -158,11 +158,11 @@ def test_hot_reload_refreshes_modified_and_deleted_files(prompt_dir: Path) -> No
         registry.get_template("contract_review")
 
 
-def test_dspy_signature_is_deferred_to_phase_four(prompt_dir: Path) -> None:
+def test_dspy_signature_requires_dspy_dependency(prompt_dir: Path) -> None:
     _write_prompt(prompt_dir)
     registry = PromptRegistry(prompt_dir)
 
-    with pytest.raises(NotImplementedError, match="Phase 4"):
+    with pytest.raises(RuntimeError, match="dspy-ai"):
         registry.to_dspy_signature("contract_review")
 
 

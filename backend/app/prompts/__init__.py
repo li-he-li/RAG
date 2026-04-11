@@ -6,6 +6,7 @@ from app.prompts.registry import (
     PromptVariableError,
     RenderedPrompt,
 )
+from app.prompts.signatures import build_domain_signatures, build_dspy_signature
 
 __all__ = [
     "PromptNotFoundError",
@@ -14,4 +15,6 @@ __all__ = [
     "PromptTemplate",
     "PromptVariableError",
     "RenderedPrompt",
+    "build_domain_signatures",
+    "build_dspy_signature",
 ]

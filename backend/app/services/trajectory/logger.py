@@ -87,9 +87,13 @@ class TrajectoryLogger:
         """
         try:
             input_hash = _compute_input_hash(input_data)
+            serialized_input = _serialize_output(input_data)
             serialized_output = _serialize_output(output)
 
             # Apply data governance to output
+            governed_input = serialized_input
+            if isinstance(serialized_input, dict):
+                governed_input = self._governance.apply(serialized_input)
             governed_output = serialized_output
             if isinstance(serialized_output, dict):
                 governed_output = self._governance.apply(serialized_output)
@@ -99,6 +103,7 @@ class TrajectoryLogger:
                 "agent_name": agent_name,
                 "step_type": step_type,
                 "input_hash": input_hash,
+                "input_payload": governed_input,
                 "output": governed_output,
                 "duration_ms": float(duration_ms),
                 "token_usage": dict(token_usage) if token_usage else None,

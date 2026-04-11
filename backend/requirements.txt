@@ -34,6 +34,7 @@ aiofiles>=24.1.0
 pyyaml>=6.0
 tiktoken>=0.7
 watchfiles>=0.21
+dspy-ai>=2.5
 
 # ── Testing (dev) ─────────────────────────────────
 pytest>=8.0.0
