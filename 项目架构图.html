@@ -76,7 +76,7 @@ h1 {
 <body>
 
 <h1>法律文书相似检索与证据溯源系统</h1>
-<p class="subtitle">Legal Similarity Evidence Search - 系统架构与核心链路流程图（含合同审查 / 观点预测 / 独立类案检索）</p>
+<p class="subtitle">Legal Similarity Evidence Search - 系统架构与核心链路流程图（多智能体 / 治理管线 / 遥测运维）</p>
 
 <div class="diagram-container">
 <h2>一、系统总览</h2>
@@ -124,10 +124,37 @@ graph TB
         DeepSeek["DeepSeek V3<br/>chat / reasoning"]
     end
 
+    subgraph AGENT_LAYER["🤖 智能体层 (agents/)"]
+        AgentPipeline["AgentPipeline<br/>Plan → Execute → Validate"]
+        ChatAgent["ChatAgent"]
+        ContractAgent["ContractReviewAgent"]
+        SimilarAgent["SimilarCaseAgent"]
+        PredictAgent["OpponentPredictionAgent"]
+        OutGov["OutputGovernance"]
+        ToolGov["ToolGovernance"]
+        RobustMgr["RobustnessManager"]
+        SkillReg["SkillRegistry"]
+        PromptReg["PromptRegistry + 热重载"]
+    end
+
+    subgraph TELEMETRY_LAYER["📊 遥测层 (services/analytics/)"]
+        Telemetry["TelemetryService<br/>correlation_id 贯穿"]
+        TokenBudget["TokenBudgetManager<br/>LRU 缓存 + 25% 安全余量"]
+        Trajectory["TrajectoryLogger<br/>执行轨迹 + 回放"]
+    end
+
     Browser --> UI
     UI --> Chat & Attachments & ReviewMode & PredictionMode & SimilarCaseMode & FileManager & StatusPanel
     Chat & Attachments & ReviewMode & PredictionMode & SimilarCaseMode & FileManager & StatusPanel -->|HTTP REST| API
-    API --> SessionFiles & Indexer & Retrieval & AttachmentFocus & ChatSvc & ReviewSvc & SimilarCaseSvc & PredictionTemplateSvc & OpponentPredictionSvc
+    API --> AgentPipeline
+    AgentPipeline --> ChatAgent & ContractAgent & SimilarAgent & PredictAgent
+    ChatAgent --> ChatSvc
+    ContractAgent --> ReviewSvc
+    SimilarAgent --> SimilarCaseSvc
+    PredictAgent --> OpponentPredictionSvc
+    ChatAgent & ContractAgent & SimilarAgent & PredictAgent --> OutGov
+    OutGov --> ToolGov
+    API --> SessionFiles & Indexer & Retrieval & AttachmentFocus & PredictionTemplateSvc
     SessionFiles --> TEMP
     Indexer --> Embedding
     Retrieval --> Embedding & Reranker
@@ -142,6 +169,9 @@ graph TB
     PredictionTemplateSvc --> PGPRED
     OpponentPredictionSvc --> PGPRED
     Retrieval --> QD & PG
+    ChatAgent & ContractAgent & SimilarAgent & PredictAgent --> Telemetry & TokenBudget & Trajectory
+    SkillReg -->|"动态发现"| ChatAgent & ContractAgent & SimilarAgent & PredictAgent
+    PromptReg -->|"模板注入"| AgentPipeline
 </pre>
 </div>
 
@@ -383,13 +413,163 @@ graph TD
 </pre>
 </div>
 
+<div class="diagram-container">
+<h2>十一、多智能体架构 (Multi-Agent Architecture)</h2>
+<p class="diagram-note">
+系统采用 <strong>流程隔离</strong> 设计：规划（Plan）、执行（Execute）、验证（Validate）由不同智能体负责。<br/>
+<code>AgentPipeline</code> 编排三阶段流水线，<code>SkillRegistry</code> 提供动态发现，<code>PromptRegistry</code> 提供热重载模板。
+</p>
+<pre class="mermaid">
+graph TB
+    subgraph AGENTS["🤖 多智能体层 (agents/)"]
+        direction TB
+        BASE["AgentBase&lt;InputT, OutputT&gt;<br/>通用基类：校验 / 生命周期 / invoke_tool"]
+        PLANNER["PlannerAgent<br/>规划智能体<br/>生成 ExecutionPlan"]
+        EXECUTOR["ExecutorAgent<br/>执行智能体<br/>调用工具 & LLM"]
+        VALIDATOR["ValidatorAgent<br/>验证智能体<br/>输出合规检查"]
+
+        CHAT_AGENT["ChatAgent<br/>对话智能体<br/>法律检索 + DeepSeek"]
+        CONTRACT_AGENT["ContractReviewAgent<br/>合同审查智能体"]
+        SIMILAR_AGENT["SimilarCaseAgent<br/>类案检索智能体"]
+        PREDICT_AGENT["OpponentPredictionAgent<br/>观点预测智能体"]
+        COMPAT_AGENT["CompatibilityAgent<br/>向后兼容层"]
+    end
+
+    subgraph ORCHESTRATION["🎼 编排层"]
+        PIPELINE["AgentPipeline<br/>run() / stream()<br/>记录 _record_trajectory"]
+        REGISTRY["SkillRegistry<br/>register / discover / list_capabilities"]
+        PROMPT_REG["PromptRegistry<br/>YAML 模板 + 热重载<br/>render_with_budget"]
+    end
+
+    BASE --> PLANNER & EXECUTOR & VALIDATOR
+    CHAT_AGENT & CONTRACT_AGENT & SIMILAR_AGENT & PREDICT_AGENT & COMPAT_AGENT --> BASE
+
+    PIPELINE -->|"Planner → Executor → Validator"| PLANNER & EXECUTOR & VALIDATOR
+    REGISTRY -->|"动态发现"| CHAT_AGENT & CONTRACT_AGENT & SIMILAR_AGENT & PREDICT_AGENT
+    PROMPT_REG -->|"模板注入"| PIPELINE
+
+    style BASE fill:#1e40af,color:#fff
+    style PLANNER fill:#4f46e5,color:#fff
+    style EXECUTOR fill:#4f46e5,color:#fff
+    style VALIDATOR fill:#4f46e5,color:#fff
+    style CHAT_AGENT fill:#059669,color:#fff
+    style CONTRACT_AGENT fill:#059669,color:#fff
+    style SIMILAR_AGENT fill:#059669,color:#fff
+    style PREDICT_AGENT fill:#059669,color:#fff
+    style COMPAT_AGENT fill:#059669,color:#fff
+    style PIPELINE fill:#d97706,color:#fff
+    style REGISTRY fill:#d97706,color:#fff
+    style PROMPT_REG fill:#d97706,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>十二、治理与安全管线 (Governance Pipeline)</h2>
+<p class="diagram-note">
+安全层<strong>不可被模型自身绕过或覆盖</strong>。输出治理检测 PII / 注入 / 有害内容；工具治理按权限分级控制副作用。
+</p>
+<pre class="mermaid">
+graph LR
+    subgraph INPUT_GOV["📥 输入治理"]
+        TOOL_GOV["ToolGovernancePolicy<br/>工具权限分级<br/>READ_ONLY / STATEFUL / EXTERNAL"]
+        TOOL_REG["ToolRegistry<br/> GovernedTool 定义<br/>schema + side_effect_level"]
+        TOOL_AUDIT["ToolAuditLog<br/>工具调用审计"]
+    end
+
+    subgraph OUTPUT_GOV["📤 输出治理"]
+        OGP["OutputGovernancePipeline<br/>schema 校验 + 内容净化"]
+        PII["PII 检测<br/>手机号 / 身份证"]
+        INJECT["注入检测<br/>prompt injection"]
+        HARMFUL["有害内容检测"]
+        DECISION{"GovernanceDecision"}
+        PASS["✅ PASS"]
+        BLOCK["🚫 BLOCK"]
+        RETRACT["↩️ RETRACT"]
+    end
+
+    subgraph ROBUST["🛡️ 稳健性"]
+        IDEMP["IdempotentRequestCache<br/>幂等缓存"]
+        CANCEL["RequestCancellationManager<br/>请求取消"]
+        BGTRACK["BackgroundTaskTracker<br/>后台任务追踪"]
+        DIRTY["DirtyStateCleaner<br/>脏状态清理"]
+        ROBUST_MGR["RobustnessManager<br/>统一协调"]
+    end
+
+    TOOL_GOV --> TOOL_REG --> TOOL_AUDIT
+    OGP --> PII & INJECT & HARMFUL --> DECISION
+    DECISION --> PASS & BLOCK & RETRACT
+    IDEMP & CANCEL & BGTRACK & DIRTY --> ROBUST_MGR
+
+    style TOOL_GOV fill:#dc2626,color:#fff
+    style OGP fill:#dc2626,color:#fff
+    style PII fill:#b91c1c,color:#fff
+    style INJECT fill:#b91c1c,color:#fff
+    style HARMFUL fill:#b91c1c,color:#fff
+    style PASS fill:#059669,color:#fff
+    style BLOCK fill:#dc2626,color:#fff
+    style RETRACT fill:#d97706,color:#fff
+    style IDEMP fill:#3b82f6,color:#fff
+    style CANCEL fill:#3b82f6,color:#fff
+    style BGTRACK fill:#3b82f6,color:#fff
+    style DIRTY fill:#3b82f6,color:#fff
+    style ROBUST_MGR fill:#1e40af,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>十三、遥测与运维层 (Telemetry & Operations)</h2>
+<p class="diagram-note">
+集中式遥测替代零散 <code>print</code>；Token 预算管理防止上下文溢出；执行轨迹支持回放与训练闭环。
+</p>
+<pre class="mermaid">
+graph TB
+    subgraph TELEMETRY["📊 遥测服务 (services/analytics/)"]
+        TELEM["TelemetryService<br/>单例 · correlation_id 贯穿"]
+        EVT["record_event<br/>结构化事件"]
+        LATENCY["record_latency<br/>延迟直方图"]
+        TOKEN_REC["record_token_usage<br/>API 消耗监控"]
+        OUTCOME["record_outcome<br/>成功/失败率"]
+        CORR["correlation_context<br/>跨异步操作追踪"]
+    end
+
+    subgraph BUDGET["💰 Token 预算管理"]
+        TBM["TokenBudgetManager<br/>上下文窗口限制"]
+        ALLOC["BudgetAllocation<br/>分段分配：system / retrieval / generation"]
+        EST["estimate_tokens<br/>LRU 缓存 + 25% 安全余量"]
+        ACTUAL["record_actual_usage<br/>估算 vs 实际校准"]
+    end
+
+    subgraph TRAJECTORY["🧭 执行轨迹 (services/trajectory/)"]
+        TLOG["TrajectoryLogger<br/>Agent 步骤记录 + 输入哈希"]
+        TSTORE["TrajectoryStore<br/>存储后端 (内存 / 可扩展)"]
+        TREPLAY["TrajectoryReplay<br/>回放管线运行"]
+        TGOV["TrajectoryGovernance<br/>脱敏 + 保留策略"]
+    end
+
+    TELEM --> EVT & LATENCY & TOKEN_REC & OUTCOME & CORR
+    TBM --> ALLOC & EST & ACTUAL
+    TLOG --> TSTORE --> TREPLAY
+    TLOG --> TGOV
+
+    style TELEM fill:#7c3aed,color:#fff
+    style TBM fill:#d97706,color:#fff
+    style TLOG fill:#059669,color:#fff
+    style TSTORE fill:#3b82f6,color:#fff
+    style TREPLAY fill:#4f46e5,color:#fff
+    style TGOV fill:#dc2626,color:#fff
+</pre>
+</div>
+
 <div class="legend">
     <div class="legend-item"><div class="legend-dot" style="background:#4f46e5"></div>用户交互</div>
     <div class="legend-item"><div class="legend-dot" style="background:#059669"></div>应用逻辑 / 会话处理</div>
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>数据存储</div>
     <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div>检索链路</div>
     <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div>模型推理 / 打分</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div>LLM 生成</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div>LLM 生成 / 遥测</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div>治理 / 安全 / 审计</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#b91c1c"></div>检测 / 防护</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1e40af"></div>基础框架层</div>
 </div>
 
 <script>

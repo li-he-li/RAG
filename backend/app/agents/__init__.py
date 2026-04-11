@@ -8,6 +8,9 @@ from app.agents.base import (
     Rejection,
     ValidatedOutput,
     ValidationError,
+    ValidationFail,
+    ValidationPass,
+    ValidationRule,
     ValidatorAgent,
 )
 from app.agents.compatibility import CompatibilityAdapter, EndpointContract, ErrorEnvelope
@@ -81,6 +84,9 @@ __all__ = [
     "TrackedTaskWarning",
     "ValidatedOutput",
     "ValidationError",
+    "ValidationFail",
+    "ValidationPass",
+    "ValidationRule",
     "ValidatorAgent",
     "background_task_tracker",
     "idempotent_request_cache",

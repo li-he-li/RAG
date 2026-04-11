@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from app.agents.tool_governance import ToolGovernancePolicy
@@ -14,12 +15,59 @@ class ValidationError(ValueError):
     pass
 
 
+# --- Validation Rule Protocol ---
+
+
+@runtime_checkable
+class ValidationRule(Protocol):
+    """Protocol for pluggable validation rules used by ValidatorAgent."""
+
+    @abstractmethod
+    def check(self, output: Any) -> ValidationPass | ValidationFail:
+        ...
+
+
+class ValidationPass:
+    """Indicates validation passed."""
+
+    __slots__ = ("passed",)
+    passed: bool
+
+    def __init__(self) -> None:
+        self.passed = True
+
+    def __bool__(self) -> bool:
+        return True
+
+
+class ValidationFail:
+    """Indicates validation failed with reason and retryability."""
+
+    __slots__ = ("reason", "retryable", "passed")
+    reason: str
+    retryable: bool
+    passed: bool
+
+    def __init__(self, reason: str, *, retryable: bool = True) -> None:
+        self.reason = reason
+        self.retryable = retryable
+        self.passed = False
+
+    def __bool__(self) -> bool:
+        return False
+
+
+# --- Plan Data Structures ---
+
+
 @dataclass(frozen=True, slots=True)
 class PlanStep:
     name: str
     target_agent: str
     input_mapping: dict[str, Any] = field(default_factory=dict)
     expected_output_type: str = "object"
+    condition: str | None = None
+    parallel_group: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +114,14 @@ class AgentBase(Generic[InputT, OutputT]):
     async def execute(self, input_data: InputT) -> OutputT:
         await self.validate(input_data)
         return await self.run(input_data)
+
+    async def can_handle(self, input_data: Any) -> float:
+        """Return confidence score [0.0, 1.0] that this agent can handle the input.
+
+        Default returns 0.0 — subclasses override to declare capabilities.
+        Score >= 0.5 means the agent is a candidate.
+        """
+        return 0.0
 
     async def invoke_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         tool_governance_policy = getattr(self, "tool_governance_policy", None)
