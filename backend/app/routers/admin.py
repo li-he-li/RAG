@@ -81,6 +81,7 @@ async def optimize_prompt(request: OptimizePromptRequest) -> dict[str, Any]:
             optimize_prompt_module,
             export_trajectory_evalset,
         )
+        from app.prompts import get_prompt_registry
     except ImportError as e:
         raise HTTPException(status_code=503, detail=f"missing dependency: {e}")
 
@@ -109,7 +110,7 @@ async def optimize_prompt(request: OptimizePromptRequest) -> dict[str, Any]:
         from app.prompts.registry import PromptRegistry
         from app.prompts.optimization import create_exact_match_metric
 
-        registry = PromptRegistry()
+        registry = get_prompt_registry()
         module = create_prompt_optimization_module(
             registry, request.prompt_name, dspy_module=dspy,
         )
@@ -147,7 +148,8 @@ async def optimize_prompt(request: OptimizePromptRequest) -> dict[str, Any]:
                     variables=tuple(request.input_keys),
                     source_path=Path("dspy://optimized"),
                 )
-                registry._templates[variant_name] = variant_template
+                # Register into the SAME singleton registry used by running agents
+                get_prompt_registry()._templates[variant_name] = variant_template
                 logger.info("Registered optimized prompt variant: %s (score=%.3f)", variant_name, result.validation_score)
             except Exception as reg_exc:
                 logger.warning("Failed to register optimized variant: %s", reg_exc)
@@ -169,9 +171,9 @@ async def optimize_prompt(request: OptimizePromptRequest) -> dict[str, Any]:
 async def list_prompt_variants(prompt_name: str) -> dict[str, Any]:
     """List available prompt variants for a given prompt name."""
     try:
-        from app.prompts.registry import PromptRegistry
+        from app.prompts import get_prompt_registry
 
-        registry = PromptRegistry()
+        registry = get_prompt_registry()
         variants = []
         for name, template in registry._templates.items():
             if name.startswith(prompt_name):
