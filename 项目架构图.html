@@ -76,500 +76,390 @@ h1 {
 <body>
 
 <h1>法律文书相似检索与证据溯源系统</h1>
-<p class="subtitle">Legal Similarity Evidence Search - 系统架构与核心链路流程图（多智能体 / 治理管线 / 遥测运维）</p>
+<p class="subtitle">Legal Similarity Evidence Search — Living Multi-Agent Architecture（记忆 / 闲聊 / 自纠正 / DSPy 训练闭环）</p>
 
 <div class="diagram-container">
-<h2>一、系统总览</h2>
+<h2>一、系统总览（Living Agent 架构）</h2>
 <pre class="mermaid">
 graph TB
     subgraph USER["👤 用户层"]
-        Browser["🌐 浏览器<br/>localhost:3000"]
+        Browser["🌐 浏览器"]
     end
 
-    subgraph FRONTEND["🖥️ 前端 (静态 HTML / JS / CSS)"]
+    subgraph FRONTEND["🖥️ 前端 (HTML/JS/CSS)"]
         UI["界面层"]
         Chat["聊天与检索"]
-        Attachments["会话附件 / 右侧预览"]
-        ReviewMode["合同审查模式"]
-        PredictionMode["观点预测模式"]
-        SimilarCaseMode["类案检索模式"]
-        FileManager["文件管理 / 模板管理（标准模板+案件模板）"]
-        StatusPanel["系统状态面板"]
+        ReviewMode["合同审查"]
+        PredictionMode["观点预测"]
+        SimilarCaseMode["类案检索"]
+        FileManager["文件/模板管理"]
     end
 
-    subgraph BACKEND["⚙️ 后端 (FastAPI + Python)"]
-        API["FastAPI 路由层<br/>/api/search /api/chat /api/chat/stream<br/>/api/similar-cases/compare<br/>/api/contract-review/* /api/session-files/*<br/>/api/documents /api/templates<br/>/api/prediction/* /api/opponent-prediction/start<br/>/api/health /api/bootstrap"]
-        SessionFiles["会话临时文件服务<br/>session_temp_file_store"]
-        Indexer["入库服务<br/>parser → embed → store"]
-        Retrieval["检索服务<br/>query → recall → rerank → validate"]
-        AttachmentFocus["附件聚焦服务<br/>切块 → 打分 → Top N"]
-        ChatSvc["对话服务<br/>attachment focus → retrieve → DeepSeek"]
-        ReviewSvc["合同审查服务<br/>template match → stream review"]
-        SimilarCaseSvc["类案检索服务<br/>独立链路 /similar-cases/compare"]
-        PredictionTemplateSvc["观点预测模板服务<br/>/prediction/templates*"]
-        OpponentPredictionSvc["观点预测服务<br/>/opponent-prediction/start"]
-        Embedding["Embedding 服务<br/>Gemini / 本地 BGE-M3"]
-        Reranker["Reranker 服务<br/>BGE-Reranker-V2-M3"]
+    subgraph ROUTE["🔀 路由层 (Orchestrator 接管)"]
+        Router["FastAPI Routers<br/>/api/chat/stream<br/>/api/similar-cases/compare<br/>/api/contract-review/stream<br/>/api/opponent-prediction/start<br/>/api/admin/*"]
+        Orch["OrchestratorAgent<br/>IntentRouter 确定性分类<br/>dispatch / dispatch_stream"]
+    end
+
+    subgraph AGENT["🤖 多智能体层 (Pipeline 编排)"]
+        Pipeline["AgentPipeline<br/>Plan → Execute → Validate<br/>自纠正 max_retries"]
+        Strategy["PlanningStrategy<br/>classify_complexity<br/>SIMPLE / MEDIUM / COMPLEX"]
+        ChatAgent["ChatAgent<br/>can_handle: 0.9"]
+        ContractAgent["ContractReviewAgent<br/>动态计划 + 条件分支"]
+        SimilarAgent["SimilarCaseAgent<br/>can_handle: 0.9"]
+        PredictAgent["PredictionAgent<br/>evidence_backed 策略"]
+        AgentTool["Agent-as-Tool<br/>递归防护 depth≤3"]
+    end
+
+    subgraph MEMORY["🧠 记忆层 (Conversation Memory)"]
+        MemStore["InMemoryMemoryStore<br/>save / load / token_budget"]
+        CtxAsm["ContextAssembler<br/>[system, summary?, ...history, current]"]
+        CasualPath["闲聊路径<br/>handle_casual_chat<br/>跳过检索 + 记忆上下文"]
+    end
+
+    subgraph SERVICE["⚙️ 业务服务层"]
+        ChatSvc["对话服务<br/>grounded + memory"]
+        ReviewSvc["合同审查服务"]
+        SimilarSvc["类案检索服务"]
+        PredictSvc["观点预测服务"]
+        Retrieval["双层检索<br/>recall → rerank → validate"]
+        Indexer["入库服务<br/>parse → embed → store"]
+    end
+
+    subgraph DSPY_LOOP["📈 DSPy 训练闭环"]
+        TLog["TrajectoryLogger<br/>write-through"]
+        TStore["TrajectoryStore<br/>全局单例"]
+        AdminAPI["Admin API<br/>export / optimize / variants"]
+        PromptReg["PromptRegistry<br/>热重载 + 优化变体注册"]
     end
 
     subgraph STORAGE["🗄️ 数据层"]
-        PG["💾 PostgreSQL<br/>documents / paragraphs"]
-        PGPRED["💾 PostgreSQL 预测表<br/>prediction_templates / prediction_template_assets<br/>prediction_template_asset_paragraphs / prediction_report_snapshots"]
-        QD["📳 Qdrant<br/>文档向量 + 段落向量"]
-        TEMP["🧷 Session Temp Files<br/>仅会话临时文件"]
+        PG["PostgreSQL"]
+        QD["Qdrant 向量库"]
     end
 
-    subgraph EXTERNAL["☁️ 外部 API / 模型"]
-        GoogleAPI["Google Gemini Embedding"]
-        DeepSeek["DeepSeek V3<br/>chat / reasoning"]
-    end
-
-    subgraph AGENT_LAYER["🤖 智能体层 (agents/)"]
-        AgentPipeline["AgentPipeline<br/>Plan → Execute → Validate"]
-        ChatAgent["ChatAgent"]
-        ContractAgent["ContractReviewAgent"]
-        SimilarAgent["SimilarCaseAgent"]
-        PredictAgent["OpponentPredictionAgent"]
-        OutGov["OutputGovernance"]
-        ToolGov["ToolGovernance"]
-        RobustMgr["RobustnessManager"]
-        SkillReg["SkillRegistry"]
-        PromptReg["PromptRegistry + 热重载"]
-    end
-
-    subgraph TELEMETRY_LAYER["📊 遥测层 (services/analytics/)"]
-        Telemetry["TelemetryService<br/>correlation_id 贯穿"]
-        TokenBudget["TokenBudgetManager<br/>LRU 缓存 + 25% 安全余量"]
-        Trajectory["TrajectoryLogger<br/>执行轨迹 + 回放"]
+    subgraph EXTERNAL["☁️ 外部"]
+        DeepSeek["DeepSeek V3"]
+        Gemini["Gemini Embedding"]
     end
 
     Browser --> UI
-    UI --> Chat & Attachments & ReviewMode & PredictionMode & SimilarCaseMode & FileManager & StatusPanel
-    Chat & Attachments & ReviewMode & PredictionMode & SimilarCaseMode & FileManager & StatusPanel -->|HTTP REST| API
-    API --> AgentPipeline
-    AgentPipeline --> ChatAgent & ContractAgent & SimilarAgent & PredictAgent
+    UI --> Chat & ReviewMode & PredictionMode & SimilarCaseMode & FileManager
+    Chat & ReviewMode & PredictionMode & SimilarCaseMode -->|HTTP REST| Router
+    Router --> Orch
+    Orch -->|"dispatch()"| Pipeline
+    Pipeline --> Strategy
+    Strategy -->|"动态生成计划"| Pipeline
+    Pipeline --> ChatAgent & ContractAgent & SimilarAgent & PredictAgent
+    ChatAgent & ContractAgent & PredictAgent --> AgentTool
     ChatAgent --> ChatSvc
     ContractAgent --> ReviewSvc
-    SimilarAgent --> SimilarCaseSvc
-    PredictAgent --> OpponentPredictionSvc
-    ChatAgent & ContractAgent & SimilarAgent & PredictAgent --> OutGov
-    OutGov --> ToolGov
-    API --> SessionFiles & Indexer & Retrieval & AttachmentFocus & PredictionTemplateSvc
-    SessionFiles --> TEMP
-    Indexer --> Embedding
-    Retrieval --> Embedding & Reranker
-    AttachmentFocus --> Embedding
-    ChatSvc --> AttachmentFocus & Retrieval & DeepSeek
-    ReviewSvc --> SessionFiles & Retrieval & DeepSeek
-    SimilarCaseSvc --> SessionFiles & Retrieval & Embedding
-    PredictionTemplateSvc --> Embedding
-    OpponentPredictionSvc --> PredictionTemplateSvc & Retrieval & DeepSeek
-    Embedding -->|API 调用| GoogleAPI
-    Indexer --> PG & QD
-    PredictionTemplateSvc --> PGPRED
-    OpponentPredictionSvc --> PGPRED
-    Retrieval --> QD & PG
-    ChatAgent & ContractAgent & SimilarAgent & PredictAgent --> Telemetry & TokenBudget & Trajectory
-    SkillReg -->|"动态发现"| ChatAgent & ContractAgent & SimilarAgent & PredictAgent
-    PromptReg -->|"模板注入"| AgentPipeline
+    SimilarAgent --> SimilarSvc
+    PredictAgent --> PredictSvc
+    ChatSvc --> Memory
+    Memory --> MemStore & CtxAsm & CasualPath
+    ChatSvc --> Retrieval & DeepSeek
+    ReviewSvc & SimilarSvc & PredictSvc --> Retrieval
+    Retrieval --> Gemini & QD & PG
+    Pipeline --> TLog
+    TLog -->|"write-through"| TStore
+    TStore --> AdminAPI
+    AdminAPI -->|"优化变体注册"| PromptReg
+    PromptReg -->|"模板注入"| Pipeline
+    Indexer --> PG & QD & Gemini
+
+    style Orch fill:#f59e0b,color:#000
+    style Pipeline fill:#4f46e5,color:#fff
+    style Strategy fill:#7c3aed,color:#fff
+    style MemStore fill:#10b981,color:#000
+    style CtxAsm fill:#10b981,color:#000
+    style CasualPath fill:#10b981,color:#000
+    style TLog fill:#ec4899,color:#fff
+    style TStore fill:#ec4899,color:#fff
+    style AdminAPI fill:#ec4899,color:#fff
+    style PromptReg fill:#ec4899,color:#fff
 </pre>
 </div>
 
 <div class="diagram-container">
-<h2>二、文档入库流程 (Ingestion Pipeline)</h2>
-<p class="diagram-note">这条流程用于把正式案例或标准模板写入 PostgreSQL + Qdrant。用户聊天时上传的会话附件不走这条链路。</p>
-<pre class="mermaid">
-graph LR
-    A["📤 用户上传正式文档<br/>.txt .md .pdf .doc .docx .xls .xlsx"] --> B["📥 API 接收<br/>POST /api/documents/upload<br/>或 /api/templates/upload"]
-    B --> C["🔌 文本提取<br/>pypdf / python-docx / openpyxl / xlrd<br/>.doc 走 Word COM / antiword / OLE 回退"]
-    C --> D["🧻 文本规范化<br/>parser.normalize"]
-    D --> E["✂️ 段落切分<br/>parser.segment"]
-    E --> F["🏷️ 争议焦点标注<br/>parser.dispute_tags"]
-    F --> G["🔘 向量化<br/>Gemini Embedding<br/>768 维"]
-    G --> H["💾 存入 PostgreSQL<br/>documents + paragraphs"]
-    G --> I["📳 存入 Qdrant<br/>legal_documents + legal_paragraphs"]
-
-    style A fill:#4f46e5,color:#fff
-    style G fill:#059669,color:#fff
-    style H fill:#3b82f6,color:#fff
-    style I fill:#d97706,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>三、双层检索流程 (Dual-Layer Retrieval)</h2>
+<h2>二、对话流程（含记忆 + 闲聊分流）</h2>
+<p class="diagram-note">每次对话：保存用户消息 → 加载历史 → 判断闲聊/法律 → 调用 LLM → 保存助手回复。闲聊不走检索管线。</p>
 <pre class="mermaid">
 graph TD
-    Q["🔎 用户查询"] --> QT["🧠 Query Understanding<br/>提取争议焦点"]
-    QT --> QE["🔘 查询向量化<br/>encode_query"]
-    QE --> L1["📄 第一层：文档召回<br/>Qdrant legal_documents<br/>top_k_documents"]
-    L1 --> L2["📑 第二层：段落召回<br/>Qdrant legal_paragraphs<br/>按 doc_id 过滤"]
-    L2 --> RR["📌 Reranker 重排<br/>BGE-Reranker-V2-M3"]
+    Q["💬 用户提问"] --> SAVE["💾 保存用户消息<br/>MemoryStore.save_message"]
+    SAVE --> CHECK{"_should_skip_retrieval?"}
+    CHECK -->|"是（闲聊）"| CASUAL["🎈 闲聊路径<br/>handle_casual_chat<br/>CASUAL_SYSTEM_PROMPT + 历史"]
+    CHECK -->|"否（法律问题）"| ATT{"有 chat_attachment?"}
+    ATT -->|"是"| FOCUS["🎯 附件聚焦"]
+    ATT -->|"否"| RET["🔍 双层检索"]
+    FOCUS --> RET2["🔍 双层检索"]
+    RET -->|"有证据"| CTX["🧱 构建上下文 + 历史消息"]
+    RET -->|"无证据"| CTX2["🧱 仅历史 + non-grounded"]
+    RET2 --> CTX
+    CTX --> GEN["🤖 DeepSeek 生成回答"]
+    CTX2 --> GEN
+    CASUAL --> GEN2["🤖 DeepSeek 闲聊回答"]
+    GEN --> SAVE2["💾 保存助手回复"]
+    GEN2 --> SAVE2
+    SAVE2 --> RES["📋 返回 ChatResponse"]
+
+    style Q fill:#4f46e5,color:#fff
+    style SAVE fill:#10b981,color:#000
+    style CHECK fill:#f59e0b,color:#000
+    style CASUAL fill:#10b981,color:#000
+    style GEN fill:#7c3aed,color:#fff
+    style SAVE2 fill:#10b981,color:#000
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>三、Agent Pipeline 自纠正循环</h2>
+<p class="diagram-note">Planner 根据输入复杂度动态生成 ExecutionPlan。Validator 检查输出：失败且可重试 → 重新规划 → 再执行。</p>
+<pre class="mermaid">
+graph TD
+    INPUT["📥 请求输入"] --> CLASSIFY["🔍 classify_complexity<br/>SIMPLE / MEDIUM / COMPLEX"]
+    CLASSIFY --> PLAN["📋 Planner 生成 ExecutionPlan<br/>条件分支 + 可选步骤"]
+    PLAN --> FILTER["⚙️ _filter_plan<br/>评估 condition 过滤步骤"]
+    FILTER --> EXEC["⚡ Executor 执行<br/>调用真实 service"]
+    EXEC --> VALID["✅ Validator 校验<br/>ValidationRule 链"]
+    VALID -->|"Pass"| OUT["📤 ValidatedOutput"]
+    VALID -->|"Fail (retryable)"| CHECK{"retries < max?"}
+    CHECK -->|"是"| REPLAN["🔄 重新规划<br/>Rejection 传回 Planner"]
+    REPLAN --> PLAN
+    CHECK -->|"否"| FAIL["📤 Rejection"]
+    VALID -->|"Fail (non-retryable)"| FAIL
+
+    EXEC -.->|"记录"| TLOG["📊 TrajectoryLogger"]
+    VALID -.->|"记录"| TLOG
+    PLAN -.->|"记录"| TLOG
+
+    style INPUT fill:#4f46e5,color:#fff
+    style CLASSIFY fill:#f59e0b,color:#000
+    style PLAN fill:#7c3aed,color:#fff
+    style EXEC fill:#059669,color:#fff
+    style VALID fill:#3b82f6,color:#fff
+    style REPLAN fill:#dc2626,color:#fff
+    style TLOG fill:#ec4899,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>四、DSPy 训练闭环（越用越聪明）</h2>
+<p class="diagram-note">每次 Agent 执行都记录轨迹到 TrajectoryStore → 累积数据 → 触发 DSPy 优化 → 变体注册回 PromptRegistry → 下次执行使用优化版 prompt。</p>
+<pre class="mermaid">
+graph LR
+    subgraph COLLECT["📊 数据收集"]
+        PIPE["AgentPipeline<br/>每次执行"] -->|"record()"| TLOG["TrajectoryLogger<br/>input_hash + output<br/>duration + prompt_versions"]
+        TLOG -->|"write-through"| TSTORE["TrajectoryStore<br/>全局单例"]
+    end
+
+    subgraph OPTIMIZE["🔧 DSPy 优化"]
+        EXPORT["POST /api/admin/<br/>export-dspy-dataset<br/>导出轨迹为 Examples"]
+        OPT["POST /api/admin/<br/>optimize-prompt<br/>BootstrapFewShot 优化"]
+        EXPORT --> OPT
+    end
+
+    subgraph DEPLOY["🚀 变体部署"]
+        REG["PromptRegistry<br/>注册优化变体<br/>name_optimized_v0.85"]
+        USE["Agent 下次执行<br/>使用优化后 prompt"]
+        REG --> USE
+    end
+
+    TSTORE -->|"读取轨迹"| EXPORT
+    OPT -->|"validation_score"| REG
+
+    style PIPE fill:#4f46e5,color:#fff
+    style TLOG fill:#ec4899,color:#fff
+    style TSTORE fill:#ec4899,color:#fff
+    style EXPORT fill:#f59e0b,color:#000
+    style OPT fill:#7c3aed,color:#fff
+    style REG fill:#10b981,color:#000
+    style USE fill:#059669,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>五、Orchestrator 路由层</h2>
+<p class="diagram-note">路由层不再 if-else 硬编码，而是通过 OrchestratorAgent + IntentRouter 确定性分类，SkillRegistry 动态发现。</p>
+<pre class="mermaid">
+graph LR
+    subgraph ROUTERS["FastAPI Routers"]
+        R1["POST /api/chat/stream"]
+        R2["POST /api/similar-cases/compare"]
+        R3["POST /api/contract-review/stream"]
+        R4["POST /api/opponent-prediction/start"]
+    end
+
+    subgraph ORCH["OrchestratorAgent"]
+        IR["IntentRouter<br/>确定性规则映射"]
+        SR["SkillRegistry<br/>4 个 PipelineFactory"]
+        DS["dispatch()<br/>dispatch_stream()"]
+    end
+
+    subgraph PIPELINES["Agent Pipelines"]
+        P1["ChatPipeline"]
+        P2["SimilarCasePipeline"]
+        P3["ContractReviewPipeline"]
+        P4["PredictionPipeline"]
+    end
+
+    R1 & R2 & R3 & R4 -->|"get_orchestrator()"| IR
+    IR -->|"classify"| SR
+    SR -->|"discover"| DS
+    DS --> P1 & P2 & P3 & P4
+
+    style R1 fill:#3b82f6,color:#fff
+    style R2 fill:#3b82f6,color:#fff
+    style R3 fill:#3b82f6,color:#fff
+    style R4 fill:#3b82f6,color:#fff
+    style IR fill:#f59e0b,color:#000
+    style SR fill:#7c3aed,color:#fff
+    style DS fill:#059669,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>六、文档入库流程</h2>
+<pre class="mermaid">
+graph LR
+    A["📤 用户上传<br/>.txt .md .pdf .doc .docx .xls .xlsx"] --> B["📥 POST /api/documents/upload<br/>或 /api/templates/upload"]
+    B --> C["🔌 文本提取<br/>pypdf / python-docx / openpyxl"]
+    C --> D["✂️ 段落切分 + 争议标签"]
+    D --> E["🔘 向量化<br/>Gemini 768 维"]
+    E --> F["💾 PostgreSQL<br/>documents + paragraphs"]
+    E --> G["📳 Qdrant<br/>legal_documents + legal_paragraphs"]
+
+    style A fill:#4f46e5,color:#fff
+    style E fill:#059669,color:#fff
+    style F fill:#3b82f6,color:#fff
+    style G fill:#d97706,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>七、双层检索流程</h2>
+<pre class="mermaid">
+graph TD
+    Q["🔎 用户查询"] --> QT["🧠 Query Understanding<br/>争议焦点提取"]
+    QT --> QE["🔘 向量化"]
+    QE --> L1["📄 文档召回<br/>Qdrant legal_documents"]
+    L1 --> L2["📑 段落召回<br/>Qdrant legal_paragraphs"]
+    L2 --> RR["📌 BGE-Reranker-V2-M3"]
     RR --> VAL["✅ 证据校验<br/>citation / snippet / version"]
-    VAL --> RES["📋 返回文档结果 + 段落证据 + 引用"]
+    VAL --> RES["📋 返回结果 + 引用"]
 
     style Q fill:#4f46e5,color:#fff
     style QE fill:#059669,color:#fff
     style L1 fill:#d97706,color:#fff
     style L2 fill:#d97706,color:#fff
     style RR fill:#dc2626,color:#fff
-    style RES fill:#059669,color:#fff
 </pre>
 </div>
 
 <div class="diagram-container">
-<h2>四、对话流程 (Grounded Chat)</h2>
-<p class="diagram-note">这里是普通聊天链路。类案检索现在走独立接口 <code>/api/similar-cases/compare</code>，不再复用聊天接口。</p>
-<pre class="mermaid">
-graph TD
-    Q["💬 用户提问"] --> ATT{"本轮是否启用 chat_attachment?"}
-    ATT -->|"是"| FOCUS["🎯 附件聚焦选择<br/>全文切块 → query 打分 → Top N 重点段"]
-    ATT -->|"否"| RET["🔍 直接检索证据<br/>复用双层检索管线"]
-    FOCUS --> RET2["🔍 检索证据<br/>整体摘要 + 重点段 + 用户问题"]
-    RET -->|"有证据"| CTX["🧱 构建上下文<br/>拼接命中证据"]
-    RET -->|"无证据"| FB["🤖 DeepSeek 直接回答<br/>non-grounded 模式"]
-    RET2 -->|"有证据"| CTX2["🧱 构建上下文<br/>附件重点段 + 命中证据"]
-    RET2 -->|"无证据"| FB2["🤖 DeepSeek 说明<br/>当前知识库未命中可靠证据"]
-    CTX --> GEN["🤖 DeepSeek 生成 grounded 回答"]
-    CTX2 --> GEN2["🤖 DeepSeek 生成 grounded 回答<br/>并强调附件相关性"]
-    GEN --> CIT["📸 引用标注<br/>溯源到具体文档行号"]
-    GEN2 --> CIT2["📸 引用标注<br/>保留命中证据来源"]
-    CIT --> RES["📋 返回回答 + 引用"]
-    CIT2 --> RES
-    FB2 --> RES
-
-    style Q fill:#4f46e5,color:#fff
-    style FOCUS fill:#059669,color:#fff
-    style GEN fill:#7c3aed,color:#fff
-    style GEN2 fill:#7c3aed,color:#fff
-    style RES fill:#059669,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>五、数据存储结构</h2>
+<h2>八、治理与安全管线</h2>
 <pre class="mermaid">
 graph LR
-    subgraph PG["💾 PostgreSQL (5432)"]
-        DT["documents 表<br/>doc_id / file_name / source_path<br/>version_id / normalized_content"]
-        PT["paragraphs 表<br/>para_id / doc_id / line_start / line_end<br/>content / dispute_tags"]
-        PPT["prediction_templates 表<br/>template_id / case_name / session_id"]
-        PPA["prediction_template_assets 表<br/>asset_id / template_id / asset_kind"]
-        PPP["prediction_template_asset_paragraphs 表<br/>asset_id / para_id / line_start / line_end"]
-        PRS["prediction_report_snapshots 表<br/>report_id / template_id / session_id"]
+    subgraph TOOL_GOV["📥 工具治理"]
+        TOOL_POLICY["ToolGovernancePolicy<br/>READ_ONLY / STATEFUL / EXTERNAL<br/>max_recursion_depth=3"]
+        TOOL_REG["ToolRegistry<br/>GovernedTool"]
+        AGENT_TOOL["Agent-as-Tool<br/>Agent 包装为受控工具"]
+    end
+
+    subgraph OUTPUT_GOV["📤 输出治理"]
+        OGP["OutputGovernancePipeline"]
+        PII["PII 检测"]
+        INJECT["注入检测"]
+        DECISION{"Decision"}
+        PASS["✅ PASS"]
+        BLOCK["🚫 BLOCK"]
+    end
+
+    subgraph ROBUST["🛡️ 稳健性"]
+        IDEMP["幂等缓存"]
+        DIRTY["脏状态清理"]
+        RETRY["自纠正循环<br/>max_retries"]
+    end
+
+    TOOL_POLICY --> TOOL_REG --> AGENT_TOOL
+    OGP --> PII & INJECT --> DECISION
+    DECISION --> PASS & BLOCK
+    IDEMP & DIRTY & RETRY --> ROBUST
+
+    style TOOL_POLICY fill:#dc2626,color:#fff
+    style OGP fill:#dc2626,color:#fff
+    style PASS fill:#059669,color:#fff
+    style BLOCK fill:#dc2626,color:#fff
+    style RETRY fill:#3b82f6,color:#fff
+</pre>
+</div>
+
+<div class="diagram-container">
+<h2>九、数据存储结构</h2>
+<pre class="mermaid">
+graph LR
+    subgraph PG["💾 PostgreSQL"]
+        DT["documents<br/>doc_id / file_name / source_path"]
+        PT["paragraphs<br/>para_id / doc_id / line_start / line_end"]
+        PPT["prediction_templates"]
+        PPA["prediction_template_assets"]
+        PRS["prediction_report_snapshots"]
+        CMT["conversation_messages<br/>session_id / role / content<br/>token_count (InMemory)"]
         DT ||--o{ PT
         PPT ||--o{ PPA
-        PPA ||--o{ PPP
         PPT ||--o{ PRS
     end
 
-    subgraph QD["📳 Qdrant (6333)"]
-        DC["legal_documents<br/>文档向量集合"]
-        PC["legal_paragraphs<br/>段落向量集合"]
-        DC -.->|doc_id 过滤| PC
+    subgraph QD["📳 Qdrant"]
+        DC["legal_documents"]
+        PC["legal_paragraphs"]
     end
 
-    subgraph TEMP["🧷 Session Temp Files"]
-        TF["session_temp_file_store<br/>chat_attachment / review_target<br/>content / content_preview / file_name"]
+    subgraph MEM["🧠 InMemoryMemoryStore"]
+        MS["session → messages[]<br/>token_budget=2000<br/>auto-compact"]
     end
+
+    style PG fill:#3b82f6,color:#fff
+    style QD fill:#d97706,color:#fff
+    style MEM fill:#10b981,color:#000
 </pre>
 </div>
 
 <div class="diagram-container">
-<h2>六、技术栈与外部依赖</h2>
+<h2>十、技术栈</h2>
 <pre class="mermaid">
 graph TB
     subgraph STACK["技术栈"]
         FE["前端<br/>HTML + CSS + Vanilla JS"]
         BE["后端<br/>FastAPI + Uvicorn"]
-        DB1["PostgreSQL 16<br/>Docker"]
-        DB2["Qdrant<br/>Docker"]
-        EMB["Embedding<br/>Google Gemini / BGE-M3"]
-        RERK["Reranker<br/>BGE-Reranker-V2-M3"]
-        LLM["LLM<br/>DeepSeek V3 API"]
-        PY["Python 环境<br/>Conda: legal-search"]
+        DB1["PostgreSQL 16"]
+        DB2["Qdrant"]
+        EMB["Gemini / BGE-M3 Embedding"]
+        RERK["BGE-Reranker-V2-M3"]
+        LLM["DeepSeek V3"]
+        DSPY["DSPy 优化框架"]
+        PY["Python 3.12<br/>Conda: legal-search"]
     end
 
     FE -->|HTTP| BE
-    BE --> EMB & RERK & LLM
+    BE --> EMB & RERK & LLM & DSPY
     BE --> DB1 & DB2
 
     style FE fill:#3b82f6,color:#fff
     style BE fill:#059669,color:#fff
-    style DB1 fill:#3b82f6,color:#fff
-    style DB2 fill:#d97706,color:#fff
-    style EMB fill:#dc2626,color:#fff
-    style RERK fill:#dc2626,color:#fff
+    style DSPY fill:#ec4899,color:#fff
     style LLM fill:#7c3aed,color:#fff
 </pre>
 </div>
 
-<div class="diagram-container">
-<h2>七、会话附件上传与预览流程</h2>
-<pre class="mermaid">
-graph TD
-    U["👤 用户上传文件<br/>聊天模式 / 合同审查模式"] --> FE["🖥️ 前端 app.js<br/>chatAttachmentInput / reviewContractInput"]
-    FE --> MODE{"当前模式?"}
-    MODE -->|"聊天模式"| CHATUP["📦 addChatAttachments<br/>显示上传进度圆环"]
-    MODE -->|"合同审查模式"| REVIEWUP["📦 uploadReviewTempFiles<br/>显示上传进度圆环"]
-
-    CHATUP --> XHR["🌐 POST /api/session-files/upload<br/>kind=chat_attachment"]
-    REVIEWUP --> XHR2["🌐 POST /api/session-files/upload<br/>kind=review_target"]
-    XHR --> EXTRACT["🔎 文本提取<br/>search.py::_extract_upload_text"]
-    XHR2 --> EXTRACT
-    EXTRACT --> TEMP["🧷 session_temp_file_store<br/>仅会话临时保存"]
-    TEMP --> RESP["📨 返回 file_id / content_preview"]
-    RESP --> TRAY["📎 输入框上方附件条"]
-    RESP --> SIDE["📚 右侧附件栏"]
-    SIDE --> PDFCHK{"浏览器里还有原始 File?"}
-    PDFCHK -->|"是 PDF"| PDFVIEW["🪟 直接嵌入 PDF 预览<br/>iframe + object URL"]
-    PDFCHK -->|"否"| TEXTPRE["📝 回退到提取文本预览"]
-
-    style U fill:#4f46e5,color:#fff
-    style XHR fill:#059669,color:#fff
-    style XHR2 fill:#059669,color:#fff
-    style EXTRACT fill:#dc2626,color:#fff
-    style TEMP fill:#3b82f6,color:#fff
-    style SIDE fill:#d97706,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>八、独立类案检索流程</h2>
-<p class="diagram-note">这条图对应独立类案检索接口 <code>/api/similar-cases/compare</code>，不再走聊天接口。</p>
-<pre class="mermaid">
-graph TD
-    U["👤 用户上传聊天附件并切到类案检索模式"] --> FE["🖥️ 前端 executeSimilarCaseSearch<br/>POST /api/similar-cases/compare"]
-    FE --> LOAD["📂 similar_case_search._load_uploaded_materials<br/>读取 session 的 chat_attachment"]
-    LOAD --> PARSE["🧩 parse_document<br/>规范化 + 段落切分 + 争议标签"]
-    PARSE --> PROFILE["🧭 抽取案件检索画像<br/>法律关系 / 争议焦点 / 标的 / 主体 / 时间 / 金额 / 关键事实"]
-    PROFILE --> QBUILD["🧪 构建 comparison_query<br/>画像字段 + 用户检索要求"]
-    QBUILD --> RET["🔍 dual_retrieve + rank_and_aggregate<br/>文档召回 + 段落召回 + 重排"]
-    RET --> SCORE["📐 综合评分<br/>doc向量 + 段落分 + 文本重合 + 画像命中 + 文件名 bonus"]
-    SCORE --> CLASSIFY["🧷 结果分类<br/>exact_duplicate / near_duplicate / similar_case"]
-    CLASSIFY --> RES["📋 返回结构化结果<br/>case_search_profile + matches + citations"]
-
-    TEMPONLY["⚠️ 不污染正式库<br/>上传附件仅存 session_temp_file_store<br/>不写入 documents / paragraphs"]
-    LOAD -.-> TEMPONLY
-
-    style U fill:#4f46e5,color:#fff
-    style PROFILE fill:#059669,color:#fff
-    style SCORE fill:#dc2626,color:#fff
-    style RET fill:#d97706,color:#fff
-    style RES fill:#059669,color:#fff
-    style TEMPONLY fill:#3b82f6,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>九、合同审查与模板匹配流程</h2>
-<pre class="mermaid">
-graph TD
-    USER["👤 用户操作<br/>点击合同审查 → 上传合同 → 发送审查要求"] --> FRONT["🖥️ 前端合同审查模式"]
-    FRONT --> SYNC["🔄 ensureReviewTempFiles<br/>必要时把聊天附件补传为 review_target"]
-    SYNC --> MATCH["📡 GET /api/contract-review/template-recommendation<br/>只做模板匹配"]
-    MATCH --> RECOMMEND["🧠 template_recommendation.py<br/>语义相似度 + 类型关键词 + 结构关键词"]
-    RECOMMEND --> MAINCHAT["💬 主聊天框显示候选模板"]
-    MAINCHAT --> LOCK["🔒 模板点击锁<br/>防止重复触发"]
-    LOCK --> STREAMREQ["📡 POST /api/contract-review/stream<br/>session_id + template_id + query"]
-    STREAMREQ --> REVIEW["📋 contract_review.py<br/>加载模板 + 待审合同<br/>条款切分 / 差异候选 / 风险整理"]
-    REVIEW --> DS["🤖 DeepSeek 流式生成审查结果"]
-    DS --> OUT["🖥️ 主聊天框流式显示<br/>审查结论 / 风险 / 修改建议"]
-
-    style USER fill:#4f46e5,color:#fff
-    style MATCH fill:#059669,color:#fff
-    style RECOMMEND fill:#dc2626,color:#fff
-    style STREAMREQ fill:#d97706,color:#fff
-    style DS fill:#7c3aed,color:#fff
-    style OUT fill:#059669,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>十、观点预测链路（模板管理 + 预测执行）</h2>
-<p class="diagram-note">观点预测是独立链路：先维护案件模板，再按用户问题启动预测，不复用合同审查模板和普通类案接口。</p>
-<pre class="mermaid">
-graph TD
-    U["👤 用户在观点预测面板维护案件模板"] --> TM["📡 /api/prediction/templates*<br/>创建 / 查询 / 删除 / 追加资产"]
-    TM --> EX["🔌 文本提取与解析<br/>案情材料(必填) + 对方语料(选填)"]
-    EX --> PT["💾 写入 prediction_* 表<br/>templates / assets / asset_paragraphs"]
-
-    Q["💬 用户在聊天区提问<br/>例如：对方会从什么角度辩驳?"] --> START["📡 POST /api/opponent-prediction/start<br/>session_id + template_id + query"]
-    START --> PROFILE["🧭 build_case_profile<br/>规则候选 + LLM 重构案件画像"]
-    PROFILE --> RET["🔍 对方视角检索<br/>基于画像与问题生成检索方向"]
-    RET --> ARG["🧠 观点生成与重排<br/>主打 / 次打 / 补充 + 引用支持项"]
-    ARG --> COUNTER["🛡️ 我方应对建议生成<br/>并区分推断项与证据项"]
-    COUNTER --> SNAP["💾 保存预测快照<br/>prediction_report_snapshots"]
-    SNAP --> UI["🖥️ 返回预测报告卡片<br/>标题 / 摘要 / 观点 / 引用"]
-
-    style U fill:#4f46e5,color:#fff
-    style TM fill:#059669,color:#fff
-    style PT fill:#3b82f6,color:#fff
-    style START fill:#d97706,color:#fff
-    style PROFILE fill:#dc2626,color:#fff
-    style ARG fill:#dc2626,color:#fff
-    style COUNTER fill:#7c3aed,color:#fff
-    style UI fill:#059669,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>十一、多智能体架构 (Multi-Agent Architecture)</h2>
-<p class="diagram-note">
-系统采用 <strong>流程隔离</strong> 设计：规划（Plan）、执行（Execute）、验证（Validate）由不同智能体负责。<br/>
-<code>AgentPipeline</code> 编排三阶段流水线，<code>SkillRegistry</code> 提供动态发现，<code>PromptRegistry</code> 提供热重载模板。
-</p>
-<pre class="mermaid">
-graph TB
-    subgraph AGENTS["🤖 多智能体层 (agents/)"]
-        direction TB
-        BASE["AgentBase&lt;InputT, OutputT&gt;<br/>通用基类：校验 / 生命周期 / invoke_tool"]
-        PLANNER["PlannerAgent<br/>规划智能体<br/>生成 ExecutionPlan"]
-        EXECUTOR["ExecutorAgent<br/>执行智能体<br/>调用工具 & LLM"]
-        VALIDATOR["ValidatorAgent<br/>验证智能体<br/>输出合规检查"]
-
-        CHAT_AGENT["ChatAgent<br/>对话智能体<br/>法律检索 + DeepSeek"]
-        CONTRACT_AGENT["ContractReviewAgent<br/>合同审查智能体"]
-        SIMILAR_AGENT["SimilarCaseAgent<br/>类案检索智能体"]
-        PREDICT_AGENT["OpponentPredictionAgent<br/>观点预测智能体"]
-        COMPAT_AGENT["CompatibilityAgent<br/>向后兼容层"]
-    end
-
-    subgraph ORCHESTRATION["🎼 编排层"]
-        PIPELINE["AgentPipeline<br/>run() / stream()<br/>记录 _record_trajectory"]
-        REGISTRY["SkillRegistry<br/>register / discover / list_capabilities"]
-        PROMPT_REG["PromptRegistry<br/>YAML 模板 + 热重载<br/>render_with_budget"]
-    end
-
-    BASE --> PLANNER & EXECUTOR & VALIDATOR
-    CHAT_AGENT & CONTRACT_AGENT & SIMILAR_AGENT & PREDICT_AGENT & COMPAT_AGENT --> BASE
-
-    PIPELINE -->|"Planner → Executor → Validator"| PLANNER & EXECUTOR & VALIDATOR
-    REGISTRY -->|"动态发现"| CHAT_AGENT & CONTRACT_AGENT & SIMILAR_AGENT & PREDICT_AGENT
-    PROMPT_REG -->|"模板注入"| PIPELINE
-
-    style BASE fill:#1e40af,color:#fff
-    style PLANNER fill:#4f46e5,color:#fff
-    style EXECUTOR fill:#4f46e5,color:#fff
-    style VALIDATOR fill:#4f46e5,color:#fff
-    style CHAT_AGENT fill:#059669,color:#fff
-    style CONTRACT_AGENT fill:#059669,color:#fff
-    style SIMILAR_AGENT fill:#059669,color:#fff
-    style PREDICT_AGENT fill:#059669,color:#fff
-    style COMPAT_AGENT fill:#059669,color:#fff
-    style PIPELINE fill:#d97706,color:#fff
-    style REGISTRY fill:#d97706,color:#fff
-    style PROMPT_REG fill:#d97706,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>十二、治理与安全管线 (Governance Pipeline)</h2>
-<p class="diagram-note">
-安全层<strong>不可被模型自身绕过或覆盖</strong>。输出治理检测 PII / 注入 / 有害内容；工具治理按权限分级控制副作用。
-</p>
-<pre class="mermaid">
-graph LR
-    subgraph INPUT_GOV["📥 输入治理"]
-        TOOL_GOV["ToolGovernancePolicy<br/>工具权限分级<br/>READ_ONLY / STATEFUL / EXTERNAL"]
-        TOOL_REG["ToolRegistry<br/> GovernedTool 定义<br/>schema + side_effect_level"]
-        TOOL_AUDIT["ToolAuditLog<br/>工具调用审计"]
-    end
-
-    subgraph OUTPUT_GOV["📤 输出治理"]
-        OGP["OutputGovernancePipeline<br/>schema 校验 + 内容净化"]
-        PII["PII 检测<br/>手机号 / 身份证"]
-        INJECT["注入检测<br/>prompt injection"]
-        HARMFUL["有害内容检测"]
-        DECISION{"GovernanceDecision"}
-        PASS["✅ PASS"]
-        BLOCK["🚫 BLOCK"]
-        RETRACT["↩️ RETRACT"]
-    end
-
-    subgraph ROBUST["🛡️ 稳健性"]
-        IDEMP["IdempotentRequestCache<br/>幂等缓存"]
-        CANCEL["RequestCancellationManager<br/>请求取消"]
-        BGTRACK["BackgroundTaskTracker<br/>后台任务追踪"]
-        DIRTY["DirtyStateCleaner<br/>脏状态清理"]
-        ROBUST_MGR["RobustnessManager<br/>统一协调"]
-    end
-
-    TOOL_GOV --> TOOL_REG --> TOOL_AUDIT
-    OGP --> PII & INJECT & HARMFUL --> DECISION
-    DECISION --> PASS & BLOCK & RETRACT
-    IDEMP & CANCEL & BGTRACK & DIRTY --> ROBUST_MGR
-
-    style TOOL_GOV fill:#dc2626,color:#fff
-    style OGP fill:#dc2626,color:#fff
-    style PII fill:#b91c1c,color:#fff
-    style INJECT fill:#b91c1c,color:#fff
-    style HARMFUL fill:#b91c1c,color:#fff
-    style PASS fill:#059669,color:#fff
-    style BLOCK fill:#dc2626,color:#fff
-    style RETRACT fill:#d97706,color:#fff
-    style IDEMP fill:#3b82f6,color:#fff
-    style CANCEL fill:#3b82f6,color:#fff
-    style BGTRACK fill:#3b82f6,color:#fff
-    style DIRTY fill:#3b82f6,color:#fff
-    style ROBUST_MGR fill:#1e40af,color:#fff
-</pre>
-</div>
-
-<div class="diagram-container">
-<h2>十三、遥测与运维层 (Telemetry & Operations)</h2>
-<p class="diagram-note">
-集中式遥测替代零散 <code>print</code>；Token 预算管理防止上下文溢出；执行轨迹支持回放与训练闭环。
-</p>
-<pre class="mermaid">
-graph TB
-    subgraph TELEMETRY["📊 遥测服务 (services/analytics/)"]
-        TELEM["TelemetryService<br/>单例 · correlation_id 贯穿"]
-        EVT["record_event<br/>结构化事件"]
-        LATENCY["record_latency<br/>延迟直方图"]
-        TOKEN_REC["record_token_usage<br/>API 消耗监控"]
-        OUTCOME["record_outcome<br/>成功/失败率"]
-        CORR["correlation_context<br/>跨异步操作追踪"]
-    end
-
-    subgraph BUDGET["💰 Token 预算管理"]
-        TBM["TokenBudgetManager<br/>上下文窗口限制"]
-        ALLOC["BudgetAllocation<br/>分段分配：system / retrieval / generation"]
-        EST["estimate_tokens<br/>LRU 缓存 + 25% 安全余量"]
-        ACTUAL["record_actual_usage<br/>估算 vs 实际校准"]
-    end
-
-    subgraph TRAJECTORY["🧭 执行轨迹 (services/trajectory/)"]
-        TLOG["TrajectoryLogger<br/>Agent 步骤记录 + 输入哈希"]
-        TSTORE["TrajectoryStore<br/>存储后端 (内存 / 可扩展)"]
-        TREPLAY["TrajectoryReplay<br/>回放管线运行"]
-        TGOV["TrajectoryGovernance<br/>脱敏 + 保留策略"]
-    end
-
-    TELEM --> EVT & LATENCY & TOKEN_REC & OUTCOME & CORR
-    TBM --> ALLOC & EST & ACTUAL
-    TLOG --> TSTORE --> TREPLAY
-    TLOG --> TGOV
-
-    style TELEM fill:#7c3aed,color:#fff
-    style TBM fill:#d97706,color:#fff
-    style TLOG fill:#059669,color:#fff
-    style TSTORE fill:#3b82f6,color:#fff
-    style TREPLAY fill:#4f46e5,color:#fff
-    style TGOV fill:#dc2626,color:#fff
-</pre>
-</div>
-
 <div class="legend">
-    <div class="legend-item"><div class="legend-dot" style="background:#4f46e5"></div>用户交互</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#059669"></div>应用逻辑 / 会话处理</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4f46e5"></div>用户交互 / 输入</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#059669"></div>业务逻辑 / 执行</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>记忆层 / 闲聊</div>
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>数据存储</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div>检索链路</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div>模型推理 / 打分</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div>LLM 生成 / 遥测</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div>治理 / 安全 / 审计</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#b91c1c"></div>检测 / 防护</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#1e40af"></div>基础框架层</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>路由 / 分类</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7c3aed"></div>LLM / 规划</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ec4899"></div>DSPy 闭环</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div>治理 / 安全</div>
 </div>
 
 <script>
