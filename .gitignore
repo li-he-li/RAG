@@ -37,6 +37,12 @@ frontend_http.out.log
 frontend_http.err.log
 nul
 
+# ── Runtime logs & browser profiles ─────────────
+log/
+chrome-profile*/
+edge-profile*/
+*.ndjson
+
 # ── Temporary / OS artifacts ────────────────────
 .tmp/
 .tmp-*
